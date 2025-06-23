@@ -1,9 +1,12 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import AuthProvider from './components/AuthProvider'
+import Navigation from './components/Navigation'
 
 export const metadata: Metadata = {
-  title: 'LinkedIn Analytics Dashboard',
-  description: 'Dashboard for LinkedIn advertising analytics data',
+  title: 'Reporting API Analysis',
+  description:
+    'Compare LinkedIn Analytics API strategies for campaign reporting',
 }
 
 export default function RootLayout({
@@ -13,7 +16,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang='en'>
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          <Navigation />
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   )
 }

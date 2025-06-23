@@ -48,7 +48,17 @@ This dashboard implements three distinct API strategies to retrieve LinkedIn cam
 ### Prerequisites
 
 - Node.js 18.17 or later
-- Valid LinkedIn API access token
+- LinkedIn Application with Marketing API access
+- LinkedIn OAuth 2.0 credentials
+
+### LinkedIn App Setup
+
+1. Create a LinkedIn application at [LinkedIn Developer Portal](https://developer.linkedin.com/)
+2. Request access to the Marketing API
+3. Configure OAuth 2.0 settings:
+   - Add redirect URI: `http://localhost:3001/api/auth/callback/linkedin`
+   - Request scopes: `r_ads_reporting`, `r_ads`, `rw_ads`
+4. Note your Client ID and Client Secret
 
 ### Installation
 
@@ -58,10 +68,15 @@ This dashboard implements three distinct API strategies to retrieve LinkedIn cam
 npm install
 ```
 
-2. Configure your LinkedIn API access token in the `.env` file:
+2. Configure your LinkedIn OAuth credentials in the `.env` file:
 
-```
-ACCESS_TOKEN=your_linkedin_access_token_here
+```env
+CLIENT_ID=your_linkedin_client_id
+CLIENT_SECRET=your_linkedin_client_secret
+SCOPE=r_ads_reporting,r_ads,rw_ads
+API_VERSION=202506
+NEXTAUTH_SECRET=your_generated_secret_here
+NEXTAUTH_URL=http://localhost:3001
 ```
 
 3. Run the development server:
@@ -70,28 +85,39 @@ ACCESS_TOKEN=your_linkedin_access_token_here
 npm run dev
 ```
 
-4. Open [http://localhost:3000](http://localhost:3000) (or the next available port) in your browser.
+4. Open [http://localhost:3001](http://localhost:3001) in your browser and sign in with LinkedIn.
+
+## Authentication Flow
+
+This application uses NextAuth.js with LinkedIn OAuth 2.0:
+
+1. **Sign In**: Users authenticate via LinkedIn OAuth
+2. **Token Management**: Access tokens are automatically managed by NextAuth
+3. **API Calls**: All LinkedIn API requests use the authenticated user's token
+4. **Session Management**: Secure session handling with automatic token refresh
 
 ## Usage
 
-1. **Enter Campaign Information**:
+1. **Authenticate**: Sign in with your LinkedIn account that has Marketing API access
+
+2. **Enter Campaign Information**:
 
    - Input the LinkedIn campaign ID you want to analyze
    - Select the start and end dates for your analytics period
 
-2. **Submit Analysis**:
+3. **Submit Analysis**:
 
    - Click "Get Analytics Data" to trigger all three API strategies simultaneously
    - The system will make parallel calls to optimize performance
 
-3. **Review Results**:
+4. **Review Results**:
 
    - **Overall Summary Table**: Campaign totals with key metrics (CTR, CPM, engagement)
    - **Geographic Breakdown Table**: Performance by country/region
    - **Daily Breakdown Table**: Day-by-day data with geographic breakdown
    - **Comparison Section**: Side-by-side analysis of all three approaches
 
-4. **Analyze Differences**:
+5. **Analyze Differences**:
    - Review the comparison section to identify data discrepancies
    - Understand which approach provides the most accurate or complete data
    - Use insights to optimize your reporting strategy

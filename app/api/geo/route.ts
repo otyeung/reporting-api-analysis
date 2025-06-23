@@ -20,14 +20,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Geo ID is required' }, { status: 400 })
     }
 
-    // Get access token and API version from environment
-    const accessToken = process.env.ACCESS_TOKEN
-    const apiVersion = process.env.API_VERSION || '202506'
+    // Get access token from Authorization header and API version from environment
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.replace('Bearer ', '')
+    const apiVersion = process.env.LINKEDIN_API_VERSION || '202506'
 
     if (!accessToken) {
       return NextResponse.json(
-        { error: 'Access token not configured' },
-        { status: 500 }
+        { error: 'Access token not provided in Authorization header' },
+        { status: 401 }
       )
     }
 

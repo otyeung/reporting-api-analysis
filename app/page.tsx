@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSession, signOut } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
 
 interface DateRange {
   start: {
@@ -57,6 +59,8 @@ interface DailyAnalyticsResponse {
 }
 
 export default function Home() {
+  const { data: session, status } = useSession()
+  const router = useRouter()
   const [campaignId, setCampaignId] = useState('354458684')
   const [startDate, setStartDate] = useState('2025-05-24')
   const [endDate, setEndDate] = useState('2025-06-22')
@@ -71,10 +75,37 @@ export default function Home() {
   const [geoData, setGeoData] = useState<{ [key: string]: string }>({})
   const [geoLoading, setGeoLoading] = useState<Set<string>>(new Set())
 
+  // Check authentication
+  useEffect(() => {
+    if (status === 'loading') return // Still loading
+
+    if (status === 'unauthenticated') {
+      router.push('/auth/signin')
+      return
+    }
+  }, [status, router])
+
   // Force re-render when geo data updates
   useEffect(() => {
     // This effect will trigger a re-render when geoData changes
   }, [geoData])
+
+  // Show loading spinner while session is loading
+  if (status === 'loading') {
+    return (
+      <div className='min-h-screen bg-gray-50 flex items-center justify-center'>
+        <div className='text-center'>
+          <div className='animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto'></div>
+          <p className='mt-4 text-gray-600'>Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // If not authenticated, return null (will redirect in useEffect)
+  if (status === 'unauthenticated') {
+    return null
+  }
 
   const fetchGeoName = async (geoId: string): Promise<string> => {
     if (geoData[geoId]) {
@@ -84,7 +115,11 @@ export default function Home() {
     setGeoLoading((prev) => new Set(Array.from(prev).concat(geoId)))
 
     try {
-      const response = await fetch(`/api/geo?id=${geoId}`)
+      const response = await fetch(`/api/geo?id=${geoId}`, {
+        headers: {
+          Authorization: `Bearer ${session?.accessToken}`,
+        },
+      })
       const data = await response.json()
       const countryName = data.defaultLocalizedName?.value || `Geo: ${geoId}`
 
@@ -115,6 +150,13 @@ export default function Home() {
     setDailyData(null)
 
     try {
+      // Check if we have a valid session with access token
+      if (!session?.accessToken) {
+        throw new Error(
+          'No valid LinkedIn access token found. Please sign in again.'
+        )
+      }
+
       // Fetch all three analytics types in parallel
       const [overallResponse, aggregateResponse, dailyResponse] =
         await Promise.all([
@@ -122,6 +164,7 @@ export default function Home() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.accessToken}`,
             },
             body: JSON.stringify({
               campaignId,
@@ -133,6 +176,7 @@ export default function Home() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.accessToken}`,
             },
             body: JSON.stringify({
               campaignId,
@@ -144,6 +188,7 @@ export default function Home() {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.accessToken}`,
             },
             body: JSON.stringify({
               campaignId,
@@ -238,13 +283,42 @@ export default function Home() {
     <div className='min-h-screen bg-gray-50 py-8'>
       <div className='max-w-7xl mx-auto px-4 sm:px-6 lg:px-8'>
         <div className='bg-white shadow rounded-lg'>
-          <div className='px-6 py-4 border-b border-gray-200'>
-            <h1 className='text-2xl font-bold text-gray-900'>
-              LinkedIn Analytics Dashboard
-            </h1>
-            <p className='mt-1 text-sm text-gray-600'>
-              Retrieve and view LinkedIn campaign analytics data
-            </p>
+          <div className='px-6 py-4 border-b border-gray-200 flex justify-between items-center'>
+            <div>
+              <h1 className='text-2xl font-bold text-gray-900'>
+                Reporting API Analysis
+              </h1>
+              <p className='mt-1 text-sm text-gray-600'>
+                Compare LinkedIn Analytics API strategies for campaign reporting
+              </p>
+            </div>
+            <div className='flex items-center space-x-4'>
+              <div className='text-right'>
+                <p className='text-sm font-medium text-gray-900'>
+                  {session?.user?.name || 'LinkedIn User'}
+                </p>
+                <p className='text-xs text-gray-500'>{session?.user?.email}</p>
+              </div>
+              <button
+                onClick={() => signOut({ callbackUrl: '/auth/signin' })}
+                className='inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+              >
+                <svg
+                  className='w-4 h-4 mr-2'
+                  fill='none'
+                  stroke='currentColor'
+                  viewBox='0 0 24 24'
+                >
+                  <path
+                    strokeLinecap='round'
+                    strokeLinejoin='round'
+                    strokeWidth={2}
+                    d='M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1'
+                  />
+                </svg>
+                Sign Out
+              </button>
+            </div>
           </div>
 
           <div className='p-6'>
