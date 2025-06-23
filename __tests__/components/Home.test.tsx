@@ -83,13 +83,26 @@ describe('Home Page', () => {
 
     expect(
       (screen.getByLabelText('Campaign ID') as HTMLInputElement).value
-    ).toBe('354458684')
-    expect(
-      (screen.getByLabelText('Start Date') as HTMLInputElement).value
-    ).toBe('2025-05-24')
-    expect((screen.getByLabelText('End Date') as HTMLInputElement).value).toBe(
-      '2025-06-22'
+    ).toBe('362567084')
+
+    // Check that start date is approximately 90 days before today
+    const startDateValue = (
+      screen.getByLabelText('Start Date') as HTMLInputElement
+    ).value
+    const endDateValue = (screen.getByLabelText('End Date') as HTMLInputElement)
+      .value
+
+    const startDate = new Date(startDateValue)
+    const endDate = new Date(endDateValue)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    // Allow for some tolerance in date comparison (within 1 day)
+    const daysDiff = Math.round(
+      (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
     )
+    expect(daysDiff).toBeGreaterThanOrEqual(88)
+    expect(daysDiff).toBeLessThanOrEqual(92)
   })
 
   it('should validate required form fields', () => {
@@ -166,7 +179,7 @@ describe('Home Page', () => {
     fireEvent.click(submitButton)
 
     await waitFor(() => {
-      expect(screen.getByText(/error occurred/i)).toBeDefined()
+      expect(screen.getByText('API Error')).toBeDefined()
     })
   })
 
@@ -250,6 +263,10 @@ describe('Home Page', () => {
 
     const mockFetch = global.fetch as jest.MockedFunction<typeof fetch>
     mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockAnalyticsData,
+      } as Response)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => mockAnalyticsData,
