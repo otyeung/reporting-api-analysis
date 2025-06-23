@@ -6,6 +6,13 @@ declare module 'next-auth' {
     accessToken?: string
     refreshToken?: string
     expiresAt?: number
+    error?: string
+    errorMessage?: string
+    tokenStatus?: {
+      expiresInDays: number
+      isNearExpiry: boolean
+      message: string
+    }
     user?: {
       id?: string
       name?: string | null
@@ -27,6 +34,8 @@ declare module 'next-auth/jwt' {
     accessToken?: string
     refreshToken?: string
     expiresAt?: number
+    tokenIssuedAt?: number
+    error?: string
     sub?: string
   }
 }

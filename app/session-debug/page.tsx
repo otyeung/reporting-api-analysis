@@ -2,6 +2,7 @@
 
 import { useSession, signOut, signIn } from 'next-auth/react'
 import { useState } from 'react'
+import TokenStatusComponent from '../components/TokenStatusComponent'
 
 export default function SessionDebug() {
   const { data: session, status } = useSession()

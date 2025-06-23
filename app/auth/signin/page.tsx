@@ -2,12 +2,14 @@
 
 import { signIn, getSession } from 'next-auth/react'
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 export default function SignIn() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [infoMessage, setInfoMessage] = useState<string | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   useEffect(() => {
     // Check if user is already signed in
@@ -18,7 +20,21 @@ export default function SignIn() {
       }
     }
     checkSession()
-  }, [router])
+
+    // Check for URL parameters to show appropriate messages
+    const error = searchParams.get('error')
+    const message = searchParams.get('message')
+
+    if (error === 'TokenExpired') {
+      setInfoMessage(
+        'Your LinkedIn session has expired. Please sign in again to continue.'
+      )
+    } else if (message === 'token-refresh') {
+      setInfoMessage(
+        'Your LinkedIn token needs to be refreshed. Please sign in again to restore access.'
+      )
+    }
+  }, [router, searchParams])
 
   const handleSignIn = async () => {
     setIsLoading(true)
@@ -60,6 +76,34 @@ export default function SignIn() {
 
       <div className='mt-8 sm:mx-auto sm:w-full sm:max-w-md'>
         <div className='bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10'>
+          {infoMessage && (
+            <div className='mb-4 bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md'>
+              <div className='flex'>
+                <div className='flex-shrink-0'>
+                  <svg
+                    className='h-5 w-5 text-blue-400'
+                    viewBox='0 0 20 20'
+                    fill='currentColor'
+                  >
+                    <path
+                      fillRule='evenodd'
+                      d='M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z'
+                      clipRule='evenodd'
+                    />
+                  </svg>
+                </div>
+                <div className='ml-3'>
+                  <h3 className='text-sm font-medium text-blue-800'>
+                    Token Refresh Required
+                  </h3>
+                  <div className='mt-2 text-sm text-blue-700'>
+                    <p>{infoMessage}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className='mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md'>
               <div className='flex'>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import TokenStatusComponent from './components/TokenStatusComponent'
 
 interface DateRange {
   start: {
@@ -322,6 +323,9 @@ export default function Home() {
           </div>
 
           <div className='p-6'>
+            {/* Token Status Component */}
+            <TokenStatusComponent />
+
             <form onSubmit={handleSubmit} className='space-y-4 mb-8'>
               <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
                 <div>
@@ -922,21 +926,28 @@ export default function Home() {
               <div className='mt-8 bg-gradient-to-r from-blue-50 to-green-50 shadow overflow-hidden sm:rounded-lg border-2 border-blue-200'>
                 <div className='px-4 py-5 sm:px-6'>
                   <h3 className='text-lg leading-6 font-medium text-gray-900'>
-                    📊 Data Comparison: All Three API Strategies
+                    📊 LinkedIn Analytics API Strategy Comparison
                   </h3>
                   <p className='mt-1 max-w-2xl text-sm text-gray-600'>
-                    Compare totals from all three API approaches: Overall
-                    Summary, Geographic Breakdown, and Daily Calls
+                    Compare data accuracy and implementation approaches across three distinct LinkedIn Analytics API methodologies
                   </p>
                 </div>
 
                 <div className='px-4 pb-5'>
                   <div className='grid grid-cols-1 md:grid-cols-3 gap-6'>
                     {/* Overall Summary */}
-                    <div className='bg-white p-4 rounded-lg shadow'>
-                      <h4 className='font-semibold text-gray-900 mb-3'>
-                        Overall Summary (timeGranularity=ALL, no pivot)
-                      </h4>
+                    <div className='bg-white p-4 rounded-lg shadow border-l-4 border-blue-500'>
+                      <div className='flex items-center justify-between mb-3'>
+                        <h4 className='font-semibold text-gray-900'>
+                          Overall Summary (timeGranularity=ALL, no pivot)
+                        </h4>
+                        <span className='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800'>
+                          📊 Benchmark
+                        </span>
+                      </div>
+                      <p className='text-xs text-gray-600 mb-3 leading-relaxed'>
+                        <strong>Recommended for:</strong> Data validation and Campaign Manager report verification. This approach provides the most accurate totals that align with LinkedIn's Campaign Manager interface, making it the gold standard for data reconciliation.
+                      </p>
                       <div className='space-y-2 text-sm'>
                         <div className='flex justify-between'>
                           <span>Total Impressions:</span>
@@ -996,10 +1007,18 @@ export default function Home() {
                     </div>
 
                     {/* Geographic Breakdown */}
-                    <div className='bg-white p-4 rounded-lg shadow'>
-                      <h4 className='font-semibold text-gray-900 mb-3'>
-                        Geographic Breakdown (timeGranularity=ALL, with pivot)
-                      </h4>
+                    <div className='bg-white p-4 rounded-lg shadow border-l-4 border-green-500'>
+                      <div className='flex items-center justify-between mb-3'>
+                        <h4 className='font-semibold text-gray-900'>
+                          Geographic Breakdown (timeGranularity=ALL, with pivot)
+                        </h4>
+                        <span className='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800'>
+                          ✅ Best Practice
+                        </span>
+                      </div>
+                      <p className='text-xs text-gray-600 mb-3 leading-relaxed'>
+                        <strong>Recommended for:</strong> Production implementations requiring demographic insights. When demographic pivots are essential for business requirements, this approach balances data accuracy with granular breakdowns while maintaining LinkedIn's professional demographic compliance standards.
+                      </p>
                       <div className='space-y-2 text-sm'>
                         <div className='flex justify-between'>
                           <span>Total Impressions:</span>
@@ -1059,10 +1078,18 @@ export default function Home() {
                     </div>
 
                     {/* Daily Totals */}
-                    <div className='bg-white p-4 rounded-lg shadow'>
-                      <h4 className='font-semibold text-gray-900 mb-3'>
-                        Daily API Calls Sum (timeGranularity=DAILY, with pivot)
-                      </h4>
+                    <div className='bg-white p-4 rounded-lg shadow border-l-4 border-red-500'>
+                      <div className='flex items-center justify-between mb-3'>
+                        <h4 className='font-semibold text-gray-900'>
+                          Daily API Calls Sum (timeGranularity=DAILY, with pivot)
+                        </h4>
+                        <span className='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800'>
+                          ⚠️ Not Recommended
+                        </span>
+                      </div>
+                      <p className='text-xs text-gray-600 mb-3 leading-relaxed'>
+                        <strong>Caution:</strong> This approach may result in significant data loss and reporting inaccuracies due to LinkedIn's professional demographic filtering applied at the daily level. The aggregation of filtered daily data compounds data loss, making totals unreliable for business decisions.
+                      </p>
                       <div className='space-y-2 text-sm'>
                         <div className='flex justify-between'>
                           <span>Total Impressions:</span>
@@ -1123,9 +1150,9 @@ export default function Home() {
                   </div>
 
                   {/* Difference Analysis */}
-                  <div className='mt-6 bg-yellow-50 p-4 rounded-lg border border-yellow-200'>
+                  <div className='mt-6 bg-gradient-to-r from-yellow-50 to-orange-50 p-4 rounded-lg border border-yellow-200'>
                     <h4 className='font-semibold text-yellow-800 mb-2'>
-                      🔍 Three-Way Analysis
+                      🔍 Professional API Strategy Analysis
                     </h4>
                     <div className='text-sm text-yellow-700'>
                       {(() => {
@@ -1398,9 +1425,30 @@ export default function Home() {
                             </div>
 
                             <p className='mt-3 text-xs'>
-                              ⚠️ These differences could be due to data
-                              processing variations in LinkedIn's API endpoints
-                              or timing differences in data collection.
+                              ⚠️ These differences are primarily due to
+                              LinkedIn's Professional Demographic restrictions:
+                              <br />
+                              • Professional Demographic values will not be
+                              returned for ads receiving engagement from too few
+                              members
+                              <br />
+                              • Professional Demographic pivots have a minimum
+                              threshold of 3 events - values with less than 3
+                              events are dropped from query results
+                              <br />
+                              • Geographic data uses professional demographics,
+                              which may cause discrepancies when compared to
+                              overall metrics
+                              <br />
+                              <a
+                                href='https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ads-reporting?view=li-lms-2025-06&tabs=http#restrictions'
+                                target='_blank'
+                                rel='noopener noreferrer'
+                                className='text-blue-600 underline hover:text-blue-800'
+                              >
+                                Learn more about LinkedIn's reporting
+                                restrictions
+                              </a>
                             </p>
                           </div>
                         )

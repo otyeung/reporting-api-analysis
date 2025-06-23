@@ -1,26 +1,135 @@
-# Reporting API Analysis
+# LinkedIn Analytics Dashboard
 
-A Next.js application that demonstrates and compares three different LinkedIn Analytics API strategies for campaign reporting. This tool helps analyze the differences between various API approaches and their data consistency.
+A comprehensive Next.js application that demonstrates LinkedIn Analytics API integration with OAuth 2.0 authentication, token management, and multiple reporting strategies. This tool helps analyze campaign performance and compare different API approaches for data consistency.
 
-## Overview
+## 🚀 Features
 
-This dashboard implements three distinct API strategies to retrieve LinkedIn campaign analytics:
-
-1. **Overall Summary** - Single API call with `timeGranularity=ALL` and no pivot (campaign totals)
-2. **Geographic Breakdown** - Single API call with `timeGranularity=ALL` and geographic pivot
-3. **Daily Breakdown** - Multiple API calls with `timeGranularity=DAILY` and geographic pivot (one call per day)
-
-## Features
-
-- **Three API Strategy Comparison**: Compare data consistency across different LinkedIn API approaches
+- **OAuth 2.0 Authentication**: Secure LinkedIn OAuth integration with NextAuth.js
+- **Automatic Token Management**: Dynamic token generation, refresh, and expiry handling
+- **Token Introspection**: Built-in tool to inspect token status, scopes, and validity
+- **Multiple API Strategies**: Compare three different LinkedIn Analytics API approaches
 - **Real-time Data Fetching**: Parallel API calls for efficient data retrieval
 - **Geographic Mapping**: Automatic resolution of LinkedIn geo IDs to country names
-- **Data Visualization**: Clean, responsive tables for each API strategy
-- **Comprehensive Analysis**: Side-by-side comparison of all three approaches with difference analysis
-- **Error Handling**: Robust error handling for individual API calls and data inconsistencies
+- **Data Visualization**: Clean, responsive tables and comparison views
+- **Comprehensive Error Handling**: Robust error handling for API calls and authentication
 - **Modern UI**: Built with Tailwind CSS for responsive design
 
-## API Strategies Explained
+## 📋 Prerequisites
+
+- Node.js 18.17 or later
+- LinkedIn Developer Account with Marketing API access
+- LinkedIn Application with proper OAuth 2.0 configuration
+
+## 🔧 LinkedIn App Setup
+
+### 1. Create LinkedIn Application
+
+1. Go to [LinkedIn Developer Portal](https://developer.linkedin.com/)
+2. Create a new app or use an existing one
+3. Request access to the **Marketing API** if not already approved
+
+### 2. Configure OAuth Settings
+
+In your LinkedIn app settings:
+
+- **App Name**: Your application name
+- **Authorized Redirect URLs**:
+  - Development: `http://localhost:3001/api/auth/callback/linkedin`
+  - Production: `https://yourdomain.com/api/auth/callback/linkedin`
+- **Required Scopes**: Enable the following permissions:
+  - `r_ads_reporting` - For accessing LinkedIn ads reporting data
+  - `r_basicprofile` - For user profile information
+  - `r_ads` - For ad account access
+  - `rw_ads` - For managing ads (if needed)
+
+### 3. Get Your Credentials
+
+From your LinkedIn app dashboard:
+
+- Copy your **Client ID**
+- Copy your **Client Secret**
+- Save these for environment configuration
+
+## ⚡ Quick Start
+
+### Installation
+
+1. **Clone and install dependencies:**
+
+```bash
+git clone <repository-url>
+cd datorama-api-simulation
+npm install
+```
+
+2. **Configure environment variables:**
+
+Create a `.env.local` file in your project root:
+
+```env
+# NextAuth Configuration
+NEXTAUTH_URL=http://localhost:3001
+NEXTAUTH_SECRET=your-nextauth-secret-here
+
+# LinkedIn OAuth Configuration
+LINKEDIN_CLIENT_ID=your-linkedin-client-id
+LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret
+LINKEDIN_SCOPE=r_ads_reporting,r_basicprofile,r_ads,rw_ads
+LINKEDIN_API_VERSION=202506
+```
+
+**Important Notes:**
+
+- Replace `your-linkedin-client-id` and `your-linkedin-client-secret` with actual values from LinkedIn
+- Generate a secure random string for `NEXTAUTH_SECRET`: `openssl rand -base64 32`
+- For production, update `NEXTAUTH_URL` to your production domain
+
+3. **Start the development server:**
+
+```bash
+npm run dev
+```
+
+4. **Open the application:**
+
+Visit [http://localhost:3001](http://localhost:3001) and sign in with LinkedIn.
+
+## 🔐 Authentication & Token Management
+
+### OAuth 2.0 Flow
+
+This application uses **NextAuth.js** for secure OAuth 2.0 authentication:
+
+1. **User Authentication:**
+
+   - User clicks "Sign in with LinkedIn"
+   - Redirected to LinkedIn for authorization
+   - LinkedIn redirects back with authorization code
+   - NextAuth exchanges code for access token
+
+2. **Token Management:**
+
+   - Access tokens stored securely in user sessions
+   - **Automatic token refresh** when tokens are near expiry (7 days before)
+   - **360-day refresh window** enforcement per LinkedIn's policy
+   - Clear error messages when refresh is no longer possible
+
+3. **Token Introspection:**
+   - Built-in token inspector tool
+   - Real-time token status, expiry, and scope information
+   - Automatic prompts for re-authentication when needed
+
+### Key Benefits Over Static Tokens
+
+- **Security**: No static tokens in code or environment files
+- **User-specific**: Each user authenticates with their own permissions
+- **Automatic refresh**: Tokens refreshed automatically per LinkedIn's requirements
+- **Scalable**: Supports multiple users with different access levels
+- **Compliant**: Follows OAuth 2.0 standards and LinkedIn's best practices
+
+## 📊 LinkedIn Analytics API Strategies
+
+This dashboard implements **three distinct API strategies** to retrieve LinkedIn campaign analytics and compare their data consistency:
 
 ### 1. Overall Summary Strategy
 
@@ -43,86 +152,56 @@ This dashboard implements three distinct API strategies to retrieve LinkedIn cam
 - **Characteristics**: One API call per day, most granular data
 - **Use Case**: Daily trend analysis and data validation
 
-## Getting Started
+### Professional Demographic Restrictions
 
-### Prerequisites
+The differences between strategies are primarily due to LinkedIn's Professional Demographic restrictions:
 
-- Node.js 18.17 or later
-- LinkedIn Application with Marketing API access
-- LinkedIn OAuth 2.0 credentials
+- **Minimum Threshold**: Professional Demographic pivots require minimum 3 events
+- **Privacy Protection**: Values not returned for ads with too few member engagements
+- **Geographic Impact**: Geographic data uses professional demographics, causing discrepancies
+- **Data Filtering**: Values with less than 3 events are automatically dropped
 
-### LinkedIn App Setup
+[Learn more about LinkedIn's reporting restrictions →](https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ads-reporting?view=li-lms-2025-06&tabs=http#restrictions)
 
-1. Create a LinkedIn application at [LinkedIn Developer Portal](https://developer.linkedin.com/)
-2. Request access to the Marketing API
-3. Configure OAuth 2.0 settings:
-   - Add redirect URI: `http://localhost:3001/api/auth/callback/linkedin`
-   - Request scopes: `r_ads_reporting`, `r_ads`, `rw_ads`
-4. Note your Client ID and Client Secret
+## 🎯 How to Use
 
-### Installation
+### 1. Authentication
 
-1. Install dependencies:
+- Visit the application and click **"Sign In with LinkedIn"**
+- Complete the OAuth flow with your LinkedIn account
+- Ensure your account has Marketing API access
 
-```bash
-npm install
-```
+### 2. Token Management
 
-2. Configure your LinkedIn OAuth credentials in the `.env` file:
+- Use the **Token Inspector** to view your token status and details
+- Monitor token expiry and refresh status
+- Re-authenticate when prompted for expired tokens
 
-```env
-CLIENT_ID=your_linkedin_client_id
-CLIENT_SECRET=your_linkedin_client_secret
-SCOPE=r_ads_reporting,r_ads,rw_ads
-API_VERSION=202506
-NEXTAUTH_SECRET=your_generated_secret_here
-NEXTAUTH_URL=http://localhost:3001
-```
+### 3. Campaign Analysis
 
-3. Run the development server:
+- **Enter Campaign Information:**
 
-```bash
-npm run dev
-```
+  - Input the LinkedIn campaign ID you want to analyze
+  - Select the start and end dates for your analytics period
 
-4. Open [http://localhost:3001](http://localhost:3001) in your browser and sign in with LinkedIn.
+- **Run Analysis:**
 
-## Authentication Flow
+  - Click "Get Analytics Data" to trigger all three API strategies
+  - The system makes parallel calls for optimal performance
 
-This application uses NextAuth.js with LinkedIn OAuth 2.0:
+- **Review Results:**
+  - **Overall Summary Table**: Campaign totals with key metrics
+  - **Geographic Breakdown Table**: Performance by country/region
+  - **Daily Breakdown Table**: Day-by-day geographic breakdown
+  - **Comparison Section**: Side-by-side analysis with difference calculations
 
-1. **Sign In**: Users authenticate via LinkedIn OAuth
-2. **Token Management**: Access tokens are automatically managed by NextAuth
-3. **API Calls**: All LinkedIn API requests use the authenticated user's token
-4. **Session Management**: Secure session handling with automatic token refresh
+### 4. Debug and Troubleshoot
 
-## Usage
+- **Session Debug Page**: Inspect your authentication session
+- **OAuth Debug Page**: Test OAuth flow and token handling
+- **Token Inspector**: Detailed token introspection and management
 
-1. **Authenticate**: Sign in with your LinkedIn account that has Marketing API access
-
-2. **Enter Campaign Information**:
-
-   - Input the LinkedIn campaign ID you want to analyze
-   - Select the start and end dates for your analytics period
-
-3. **Submit Analysis**:
-
-   - Click "Get Analytics Data" to trigger all three API strategies simultaneously
-   - The system will make parallel calls to optimize performance
-
-4. **Review Results**:
-
-   - **Overall Summary Table**: Campaign totals with key metrics (CTR, CPM, engagement)
-   - **Geographic Breakdown Table**: Performance by country/region
-   - **Daily Breakdown Table**: Day-by-day data with geographic breakdown
-   - **Comparison Section**: Side-by-side analysis of all three approaches
-
-5. **Analyze Differences**:
-   - Review the comparison section to identify data discrepancies
-   - Understand which approach provides the most accurate or complete data
-   - Use insights to optimize your reporting strategy
-
-## Data Metrics Displayed
+## 📈 Data Metrics Displayed
 
 - **Impressions**: Total ad impressions
 - **Clicks**: Total clicks on ads
@@ -134,9 +213,7 @@ This application uses NextAuth.js with LinkedIn OAuth 2.0:
 - **Geographic Region**: Country/region breakdown (when applicable)
 - **Date Range**: Coverage period for the data
 
-## API Integration
-
-The application integrates with multiple LinkedIn Analytics API endpoints:
+## 🔍 API Integration Details
 
 ### Primary Analytics Endpoint
 
@@ -175,125 +252,183 @@ campaigns=List(urn:li:sponsoredCampaign:{campaignId})
 dateRange=(start:(year:YYYY,month:MM,day:DD),end:(year:YYYY,month:MM,day:DD))
 ```
 
-### Geographic Resolution Endpoint
+### Additional Endpoints
+
+**Token Introspection:**
+
+```
+POST /oauth/v2/introspectToken
+```
+
+**Geographic Resolution:**
 
 ```
 GET /rest/regions/{geoId}
 ```
 
-Used to resolve LinkedIn geo IDs (e.g., `urn:li:geo:103644278`) to human-readable country names.
+**Profile Information:**
 
-## Project Structure
+```
+GET /v2/me
+```
+
+## 🐛 Troubleshooting
+
+### Authentication Issues
+
+**"Invalid redirect_uri":**
+
+- Ensure redirect URL in LinkedIn app matches exactly: `http://localhost:3001/api/auth/callback/linkedin`
+
+**"Invalid scope":**
+
+- Check that all required scopes are enabled in your LinkedIn app
+- Verify the `LINKEDIN_SCOPE` environment variable
+
+**"Access token missing":**
+
+- Check browser console for authentication errors
+- Visit `/session-debug` to inspect session data
+- Ensure user has completed OAuth flow
+
+### Token Issues
+
+**"Token expired" or "Token inactive":**
+
+- Use the Token Inspector to check token status
+- Click "Sign Out & Sign In Again" when prompted
+- Tokens automatically refresh when near expiry
+
+**"Insufficient permissions":**
+
+- Verify your LinkedIn account has access to the ad accounts
+- Check that Marketing API access is approved for your LinkedIn app
+
+### API Issues
+
+**"LinkedIn API request failed: 401":**
+
+- Token may be expired or invalid
+- Use Token Inspector to verify token status
+- Re-authenticate if necessary
+
+**"No analytics data found":**
+
+- Verify campaign ID exists and you have access to it
+- Check that the date range contains campaign activity
+- Ensure campaign was active during the specified period
+
+**Geographic data discrepancies:**
+
+- This is expected due to LinkedIn's Professional Demographic restrictions
+- Professional demographic pivots have minimum thresholds
+- Some data may be filtered for privacy protection
+
+## 🚀 Production Deployment
+
+### Environment Setup
+
+For production deployment:
+
+1. **Update environment variables:**
+
+```env
+NEXTAUTH_URL=https://yourdomain.com
+NEXTAUTH_SECRET=your-secure-production-secret
+LINKEDIN_CLIENT_ID=your-production-client-id
+LINKEDIN_CLIENT_SECRET=your-production-client-secret
+```
+
+2. **LinkedIn App Configuration:**
+
+- Add production redirect URL: `https://yourdomain.com/api/auth/callback/linkedin`
+- Ensure Marketing API access is approved for production use
+
+3. **Security Considerations:**
+
+- Use a secure, randomly generated `NEXTAUTH_SECRET`
+- Enable HTTPS for all production traffic
+- Implement proper session management and security headers
+
+## 📄 Environment Variables
+
+Create a `.env.local` file with the following variables:
+
+```env
+# NextAuth Configuration
+NEXTAUTH_URL=http://localhost:3001                    # Your app URL
+NEXTAUTH_SECRET=your-nextauth-secret-here             # Random secret string
+
+# LinkedIn OAuth Configuration
+LINKEDIN_CLIENT_ID=your-linkedin-client-id            # From LinkedIn Developer Portal
+LINKEDIN_CLIENT_SECRET=your-linkedin-client-secret    # From LinkedIn Developer Portal
+LINKEDIN_SCOPE=r_ads_reporting,r_basicprofile,r_ads,rw_ads  # Required scopes
+LINKEDIN_API_VERSION=202506                           # LinkedIn API version
+```
+
+**Security Notes:**
+
+- Never commit `.env.local` to version control
+- Use different credentials for development and production
+- Generate secure secrets: `openssl rand -base64 32`
+
+## 🏗️ Project Structure
 
 ```
 ├── app/
 │   ├── api/
+│   │   ├── auth/[...nextauth]/
+│   │   │   └── route.ts              # NextAuth OAuth configuration
 │   │   ├── analytics/
-│   │   │   └── route.ts          # Geographic breakdown API strategy
+│   │   │   └── route.ts              # Geographic breakdown API strategy
 │   │   ├── daily-analytics/
-│   │   │   └── route.ts          # Daily breakdown API strategy
+│   │   │   └── route.ts              # Daily breakdown API strategy
 │   │   ├── geo/
-│   │   │   └── route.ts          # Geographic ID resolution
+│   │   │   └── route.ts              # Geographic ID resolution
+│   │   ├── linkedin-profile/
+│   │   │   └── route.ts              # LinkedIn profile API proxy
+│   │   ├── linkedin-introspect/
+│   │   │   └── route.ts              # Token introspection API
 │   │   └── overall-analytics/
-│   │       └── route.ts          # Overall summary API strategy
-│   ├── globals.css               # Global styles
-│   ├── layout.tsx                # Root layout
-│   └── page.tsx                  # Main dashboard with three-strategy comparison
-├── .env                          # Environment variables (LinkedIn access token)
-├── package.json                  # Dependencies and scripts
-├── tailwind.config.js            # Tailwind CSS configuration
-└── tsconfig.json                 # TypeScript configuration
+│   │       └── route.ts              # Overall summary API strategy
+│   ├── auth/
+│   │   ├── signin/
+│   │   │   └── page.tsx              # Custom sign-in page
+│   │   └── error/
+│   │       └── page.tsx              # OAuth error handling
+│   ├── components/
+│   │   ├── AuthProvider.tsx          # NextAuth session provider
+│   │   ├── Navigation.tsx            # Main navigation component
+│   │   └── TokenStatusComponent.tsx  # Token status display & introspection
+│   ├── debug/
+│   │   └── page.tsx                  # OAuth debug page
+│   ├── session-debug/
+│   │   └── page.tsx                  # Session debugging tools
+│   ├── token-introspect/
+│   │   └── page.tsx                  # Token introspection interface
+│   ├── globals.css                   # Global styles
+│   ├── layout.tsx                    # Root layout with auth
+│   └── page.tsx                      # Main dashboard
+├── lib/
+│   └── linkedin-token-refresh.ts     # Token refresh utilities
+├── types/
+│   └── next-auth.d.ts                # NextAuth TypeScript definitions
+├── .env.local.example                # Environment variables template
+├── package.json                      # Dependencies and scripts
+├── tailwind.config.js                # Tailwind CSS configuration
+└── tsconfig.json                     # TypeScript configuration
 ```
 
-## Key Implementation Details
-
-### Parallel API Execution
-
-All three strategies execute simultaneously using `Promise.all()` for optimal performance.
-
-### Geographic Data Caching
-
-Country names are cached client-side to minimize repeated geo API calls.
-
-### Error Handling Per Strategy
-
-Each API strategy has independent error handling, allowing partial results if some strategies fail.
-
-### Data Consistency Analysis
-
-Built-in comparison logic identifies discrepancies between strategies and highlights potential data quality issues.
-
-## Technologies Used
+## 🛠️ Technologies Used
 
 - **Next.js 14** - React framework with App Router
+- **NextAuth.js** - OAuth 2.0 authentication
 - **TypeScript** - Type-safe JavaScript
 - **Tailwind CSS** - Utility-first CSS framework
-- **LinkedIn Analytics API** - For campaign data retrieval
+- **LinkedIn Marketing API** - Campaign data and analytics
+- **LinkedIn OAuth 2.0** - Secure authentication
 
-## Environment Variables
-
-Set up your `.env` file with your LinkedIn API credentials:
-
-```env
-ACCESS_TOKEN=your_linkedin_api_access_token
-```
-
-### Getting LinkedIn API Access
-
-1. Create a LinkedIn application at [LinkedIn Developer Portal](https://developer.linkedin.com/)
-2. Request access to the Marketing API
-3. Generate an access token with appropriate scopes:
-   - `r_ads_reporting`
-   - `r_organization_social`
-4. Add the token to your `.env` file
-
-## Error Handling
-
-Comprehensive error handling includes:
-
-- **Individual Strategy Failures**: Each API strategy can fail independently
-- **Partial Results**: Display available data even if some strategies fail
-- **API Rate Limiting**: Proper handling of LinkedIn API rate limits
-- **Network Issues**: Graceful degradation for connectivity problems
-- **Invalid Tokens**: Clear error messaging for authentication issues
-- **Data Validation**: Verification of API response structure
-- **Geographic Resolution Errors**: Fallback to geo IDs when country names unavailable
-
-## Performance Considerations
-
-- **Parallel Execution**: All strategies run simultaneously
-- **Caching**: Geographic names cached to reduce API calls
-- **Optimized Daily Calls**: Daily strategy efficiently handles date ranges
-- **Loading States**: Real-time feedback during data fetching
-- **Error Boundaries**: Prevent single strategy failures from breaking the entire dashboard
-
-## Use Cases
-
-### Data Quality Analysis
-
-Compare results across strategies to identify:
-
-- Inconsistencies in LinkedIn's data processing
-- Missing data in specific approaches
-- Optimal strategy for different reporting needs
-
-### Reporting Strategy Optimization
-
-Determine which approach provides:
-
-- Most complete data coverage
-- Best performance characteristics
-- Optimal balance of detail and efficiency
-
-### API Behavior Understanding
-
-Gain insights into:
-
-- LinkedIn API response patterns
-- Data aggregation differences
-- Regional data availability
-
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -308,43 +443,41 @@ Gain insights into:
 - Follow TypeScript best practices
 - Add proper error handling for new API integrations
 - Update this README for any new features
-- Test all three API strategies thoroughly
+- Test all authentication flows thoroughly
 - Ensure responsive design compatibility
+- Include proper token management for new features
 
-## License
+## 📜 License
 
 This project is for demonstration and analysis purposes. Please ensure compliance with:
 
-- LinkedIn's API Terms of Service
-- LinkedIn's Rate Limiting Guidelines
+- [LinkedIn API Terms of Service](https://legal.linkedin.com/api-terms-of-use)
+- [LinkedIn Marketing API Policies](https://www.linkedin.com/help/lms/answer/a418880)
 - Data Privacy Regulations (GDPR, CCPA, etc.)
+- OAuth 2.0 Security Best Practices
 
-## Troubleshooting
+## 🎯 Use Cases
 
-### Common Issues
+### Data Quality Analysis
 
-**"Access token not configured"**
+Compare results across strategies to identify:
 
-- Ensure `.env` file exists with valid `ACCESS_TOKEN`
+- Inconsistencies in LinkedIn's data processing
+- Missing data in specific approaches
+- Optimal strategy for different reporting needs
 
-**"LinkedIn API request failed: 401"**
+### API Strategy Optimization
 
-- Verify your access token is valid and not expired
-- Check that your LinkedIn app has required permissions
+Determine which approach provides:
 
-**"No analytics data found"**
+- Most complete data coverage
+- Best performance characteristics
+- Optimal balance of detail and efficiency
 
-- Verify campaign ID exists and you have access to it
-- Check that the date range contains campaign activity
-- Ensure campaign was active during the specified period
+### Authentication Testing
 
-**Geo ID resolution failures**
+Test and understand:
 
-- Geographic data may be limited for some regions
-- The app will fallback to displaying geo IDs when names unavailable
-
-### Performance Tips
-
-- Use shorter date ranges for faster daily breakdown processing
-- Monitor LinkedIn API rate limits in high-frequency usage
-- Consider caching strategies for frequently accessed campaigns
+- OAuth 2.0 flow implementation
+- Token refresh mechanisms
+- Session management best practices
