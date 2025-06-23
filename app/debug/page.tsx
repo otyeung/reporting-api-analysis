@@ -2,9 +2,14 @@
 
 import { signIn, getProviders } from 'next-auth/react'
 import { useEffect, useState } from 'react'
+import type { ClientSafeProvider, LiteralUnion } from 'next-auth/react'
+import type { BuiltInProviderType } from 'next-auth/providers/index'
 
 export default function DebugPage() {
-  const [providers, setProviders] = useState<any>(null)
+  const [providers, setProviders] = useState<Record<
+    LiteralUnion<BuiltInProviderType, string>,
+    ClientSafeProvider
+  > | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {

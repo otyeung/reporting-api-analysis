@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useSession, signOut } from 'next-auth/react'
+import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import TokenStatusComponent from './components/TokenStatusComponent'
 
@@ -44,7 +44,7 @@ interface LinkedInAnalyticsResponse {
   paging: {
     start: number
     count: number
-    links: any[]
+    links: Record<string, unknown>[]
   }
   elements: AnalyticsElement[]
 }
@@ -161,42 +161,33 @@ export default function Home() {
       // Fetch all three analytics types in parallel
       const [overallResponse, aggregateResponse, dailyResponse] =
         await Promise.all([
-          fetch('/api/overall-analytics', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.accessToken}`,
-            },
-            body: JSON.stringify({
-              campaignId,
-              startDate,
-              endDate,
-            }),
-          }),
-          fetch('/api/analytics', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.accessToken}`,
-            },
-            body: JSON.stringify({
-              campaignId,
-              startDate,
-              endDate,
-            }),
-          }),
-          fetch('/api/daily-analytics', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.accessToken}`,
-            },
-            body: JSON.stringify({
-              campaignId,
-              startDate,
-              endDate,
-            }),
-          }),
+          fetch(
+            `/api/overall-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
+            {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${session.accessToken}`,
+              },
+            }
+          ),
+          fetch(
+            `/api/analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
+            {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${session.accessToken}`,
+              },
+            }
+          ),
+          fetch(
+            `/api/daily-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
+            {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${session.accessToken}`,
+              },
+            }
+          ),
         ])
 
       if (!overallResponse.ok) {
@@ -230,7 +221,9 @@ export default function Home() {
       const allElements = [
         ...(aggregateResult.elements || []),
         ...(dailyResult.aggregated || []),
-        ...dailyResult.dailyData.flatMap((day: any) => day.elements || []),
+        ...dailyResult.dailyData.flatMap(
+          (day: { elements?: AnalyticsElement[] }) => day.elements || []
+        ),
       ]
 
       if (allElements.length > 0) {
@@ -284,44 +277,15 @@ export default function Home() {
     <div className='min-h-screen bg-gray-50 py-8'>
       <div className='max-w-7xl mx-auto px-4 sm:px-6 lg:px-8'>
         <div className='bg-white shadow rounded-lg'>
-          <div className='px-6 py-4 border-b border-gray-200 flex justify-between items-center'>
-            <div>
-              <h1 className='text-2xl font-bold text-gray-900'>
-                LinkedIn Analytics API Strategy Analysis
-              </h1>
-              <p className='mt-1 text-sm text-gray-600'>
-                Professional comparison of three LinkedIn Marketing API
-                approaches: Benchmark validation, Production implementation, and
-                Data accuracy analysis
-              </p>
-            </div>
-            <div className='flex items-center space-x-4'>
-              <div className='text-right'>
-                <p className='text-sm font-medium text-gray-900'>
-                  {session?.user?.name || 'LinkedIn User'}
-                </p>
-                <p className='text-xs text-gray-500'>{session?.user?.email}</p>
-              </div>
-              <button
-                onClick={() => signOut({ callbackUrl: '/auth/signin' })}
-                className='inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
-              >
-                <svg
-                  className='w-4 h-4 mr-2'
-                  fill='none'
-                  stroke='currentColor'
-                  viewBox='0 0 24 24'
-                >
-                  <path
-                    strokeLinecap='round'
-                    strokeLinejoin='round'
-                    strokeWidth={2}
-                    d='M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1'
-                  />
-                </svg>
-                Sign Out
-              </button>
-            </div>
+          <div className='px-6 py-4 border-b border-gray-200'>
+            <h1 className='text-2xl font-bold text-gray-900'>
+              LinkedIn Analytics API Strategy Analysis
+            </h1>
+            <p className='mt-1 text-sm text-gray-600'>
+              Professional comparison of three LinkedIn Marketing API
+              approaches: Benchmark validation, Production implementation, and
+              Data accuracy analysis
+            </p>
           </div>
 
           <div className='p-6'>
@@ -991,8 +955,8 @@ export default function Home() {
                         <strong>Recommended for:</strong> Data validation and
                         Campaign Manager report verification. This approach
                         provides the most accurate totals that align with
-                        LinkedIn's Campaign Manager interface, making it the
-                        gold standard for data reconciliation.
+                        LinkedIn&apos;s Campaign Manager interface, making it
+                        the gold standard for data reconciliation.
                       </p>
                       <div className='space-y-2 text-sm'>
                         <div className='flex justify-between'>
@@ -1067,7 +1031,7 @@ export default function Home() {
                         implementations requiring demographic insights. When
                         demographic pivots are essential for business
                         requirements, this approach balances data accuracy with
-                        granular breakdowns while maintaining LinkedIn's
+                        granular breakdowns while maintaining LinkedIn&apos;s
                         professional demographic compliance standards.
                       </p>
                       <div className='space-y-2 text-sm'>
@@ -1142,10 +1106,10 @@ export default function Home() {
                       <p className='text-xs text-gray-600 mb-3 leading-relaxed'>
                         <strong>Caution:</strong> This approach may result in
                         significant data loss and reporting inaccuracies due to
-                        LinkedIn's professional demographic filtering applied at
-                        the daily level. The aggregation of filtered daily data
-                        compounds data loss, making totals unreliable for
-                        business decisions.
+                        LinkedIn&apos;s professional demographic filtering
+                        applied at the daily level. The aggregation of filtered
+                        daily data compounds data loss, making totals unreliable
+                        for business decisions.
                       </p>
                       <div className='space-y-2 text-sm'>
                         <div className='flex justify-between'>
@@ -1483,7 +1447,8 @@ export default function Home() {
 
                             <p className='mt-3 text-xs'>
                               ⚠️ These differences are primarily due to
-                              LinkedIn's Professional Demographic restrictions:
+                              LinkedIn&apos;s Professional Demographic
+                              restrictions:
                               <br />
                               • Professional Demographic values will not be
                               returned for ads receiving engagement from too few
@@ -1503,7 +1468,7 @@ export default function Home() {
                                 rel='noopener noreferrer'
                                 className='text-blue-600 underline hover:text-blue-800'
                               >
-                                Learn more about LinkedIn's reporting
+                                Learn more about LinkedIn&apos;s reporting
                                 restrictions
                               </a>
                             </p>
@@ -1558,7 +1523,7 @@ export default function Home() {
                       <p className='text-xs text-indigo-800 leading-relaxed'>
                         <strong>Key Insight:</strong> Data discrepancies between
                         strategies are not implementation errors but reflect
-                        LinkedIn's privacy-first approach to professional
+                        LinkedIn&apos;s privacy-first approach to professional
                         demographic reporting. Choose your strategy based on
                         your specific reporting requirements and acceptable data
                         variance levels.

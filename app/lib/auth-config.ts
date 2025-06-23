@@ -7,6 +7,57 @@ import {
   isRefreshTokenValid,
 } from '../../lib/linkedin-token-refresh'
 
+interface LinkedInProfile {
+  id: string
+  localizedFirstName?: string
+  localizedLastName?: string
+  firstName?: {
+    localized?: {
+      en_US?: string
+    }
+  }
+  lastName?: {
+    localized?: {
+      en_US?: string
+    }
+  }
+  emailAddress?: string
+  profilePicture?: {
+    'displayImage~'?: {
+      elements?: Array<{
+        identifiers?: Array<{
+          identifier?: string
+        }>
+      }>
+    }
+  }
+}
+
+interface LinkedInTokens {
+  access_token?: string
+  refresh_token?: string
+  expires_at?: number
+  token_type?: string
+}
+
+interface ExtendedSession {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
+  tokenType: string
+  linkedinId: string
+  error?: string
+  tokenStatus?: {
+    expiresInDays: number
+    isNearExpiry: boolean
+    message: string
+  }
+  user?: {
+    name?: string
+    email?: string
+  }
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     LinkedInProvider({
@@ -29,7 +80,7 @@ export const authOptions: NextAuthOptions = {
       // Disable ID token validation for LinkedIn
       idToken: false,
       checks: ['state'],
-      profile(profile: any, tokens: any) {
+      profile(profile: LinkedInProfile, tokens: LinkedInTokens) {
         console.log('LinkedIn profile:', profile)
         console.log('LinkedIn tokens:', tokens)
         return {
@@ -64,18 +115,19 @@ export const authOptions: NextAuthOptions = {
         token.tokenType = account.token_type || 'Bearer'
 
         // Store additional LinkedIn info
-        token.linkedinId = (profile as any).id
+        const linkedInProfile = profile as LinkedInProfile
+        token.linkedinId = linkedInProfile.id
         token.name =
           `${
-            (profile as any).localizedFirstName ||
-            (profile as any).firstName?.localized?.en_US ||
+            linkedInProfile.localizedFirstName ||
+            linkedInProfile.firstName?.localized?.en_US ||
             ''
           } ${
-            (profile as any).localizedLastName ||
-            (profile as any).lastName?.localized?.en_US ||
+            linkedInProfile.localizedLastName ||
+            linkedInProfile.lastName?.localized?.en_US ||
             ''
           }`.trim() || 'LinkedIn User'
-        token.email = (profile as any).emailAddress || null
+        token.email = linkedInProfile.emailAddress || null
 
         return token
       }
@@ -155,31 +207,32 @@ export const authOptions: NextAuthOptions = {
 
     async session({ session, token }) {
       // Pass token info to the session
-      ;(session as any).accessToken = token.accessToken as string
-      ;(session as any).refreshToken = token.refreshToken as string
-      ;(session as any).expiresAt = token.expiresAt as number
-      ;(session as any).tokenType = token.tokenType as string
-      ;(session as any).linkedinId = token.linkedinId as string
-      ;(session as any).error = token.error as string | undefined
+      const extendedSession = session as unknown as ExtendedSession
+      extendedSession.accessToken = token.accessToken as string
+      extendedSession.refreshToken = token.refreshToken as string
+      extendedSession.expiresAt = token.expiresAt as number
+      extendedSession.tokenType = token.tokenType as string
+      extendedSession.linkedinId = token.linkedinId as string
+      extendedSession.error = token.error as string | undefined
 
       // Add user info from token
       if (token.name) {
-        session.user = session.user || {}
-        session.user.name = token.name as string
+        extendedSession.user = extendedSession.user || {}
+        extendedSession.user.name = token.name as string
       }
       if (token.email) {
-        session.user = session.user || {}
-        session.user.email = token.email as string
+        extendedSession.user = extendedSession.user || {}
+        extendedSession.user.email = token.email as string
       }
 
       // Calculate days until expiry for display
-      if ((session as any).expiresAt) {
+      if (extendedSession.expiresAt) {
         const now = Math.floor(Date.now() / 1000)
         const daysUntilExpiry = Math.ceil(
-          ((session as any).expiresAt - now) / 86400
+          (extendedSession.expiresAt - now) / 86400
         )
 
-        ;(session as any).tokenStatus = {
+        extendedSession.tokenStatus = {
           expiresInDays: daysUntilExpiry,
           isNearExpiry: daysUntilExpiry <= 7,
           message:
@@ -190,9 +243,9 @@ export const authOptions: NextAuthOptions = {
       }
 
       console.log('Session callback - Session created:', {
-        accessToken: (session as any).accessToken ? 'present' : 'missing',
-        expiresAt: (session as any).expiresAt,
-        error: (session as any).error || 'none',
+        accessToken: extendedSession.accessToken ? 'present' : 'missing',
+        expiresAt: extendedSession.expiresAt,
+        error: extendedSession.error || 'none',
       })
 
       return session

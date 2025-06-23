@@ -2,11 +2,12 @@
 
 import { useSession, signOut, signIn } from 'next-auth/react'
 import { useState } from 'react'
-import TokenStatusComponent from '../components/TokenStatusComponent'
 
 export default function SessionDebug() {
   const { data: session, status } = useSession()
-  const [testResult, setTestResult] = useState<any>(null)
+  const [testResult, setTestResult] = useState<Record<string, unknown> | null>(
+    null
+  )
   const [testing, setTesting] = useState(false)
 
   const testLinkedInAPI = async () => {

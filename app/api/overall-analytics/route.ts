@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-interface LinkedInAnalyticsParams {
-  campaignId: string
-  startDate: string
-  endDate: string
-}
-
 interface DateRange {
   start: {
     year: number
@@ -46,15 +40,27 @@ interface LinkedInAnalyticsResponse {
   paging: {
     start: number
     count: number
-    links: any[]
+    links: Record<string, unknown>[]
   }
   elements: AnalyticsElement[]
 }
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { campaignId, startDate, endDate }: LinkedInAnalyticsParams = body
+    // Get query parameters for GET request
+    const { searchParams } = new URL(request.url)
+    const campaignId = searchParams.get('campaignId')
+    const startDate = searchParams.get('startDate')
+    const endDate = searchParams.get('endDate')
+
+    if (!campaignId || !startDate || !endDate) {
+      return NextResponse.json(
+        {
+          error: 'Missing required parameters: campaignId, startDate, endDate',
+        },
+        { status: 400 }
+      )
+    }
 
     // Parse dates
     const start = new Date(startDate)

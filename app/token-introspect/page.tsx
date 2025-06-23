@@ -149,7 +149,7 @@ export default function TokenIntrospectionPage() {
             <p className='text-gray-600'>
               This tool allows you to introspect your current LinkedIn access
               token to view its status, expiry, scopes, and other metadata using
-              LinkedIn's official introspection API.
+              LinkedIn&apos;s official introspection API.
             </p>
           </div>
 
