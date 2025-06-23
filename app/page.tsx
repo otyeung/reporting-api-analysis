@@ -62,7 +62,7 @@ interface DailyAnalyticsResponse {
 export default function Home() {
   const { data: session, status } = useSession()
   const router = useRouter()
-  const [campaignId, setCampaignId] = useState('354458684')
+  const [campaignId, setCampaignId] = useState('362567084')
 
   // Calculate default date range: 90 days before today to today
   const getDefaultDates = () => {
@@ -82,6 +82,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<LinkedInAnalyticsResponse | null>(null)
   const [overallData, setOverallData] =
+    useState<LinkedInAnalyticsResponse | null>(null)
+  const [monthlyData, setMonthlyData] =
     useState<LinkedInAnalyticsResponse | null>(null)
   const [dailyData, setDailyData] = useState<DailyAnalyticsResponse | null>(
     null
@@ -162,6 +164,7 @@ export default function Home() {
     setError(null)
     setData(null)
     setOverallData(null)
+    setMonthlyData(null)
     setDailyData(null)
 
     try {
@@ -172,37 +175,50 @@ export default function Home() {
         )
       }
 
-      // Fetch all three analytics types in parallel
-      const [overallResponse, aggregateResponse, dailyResponse] =
-        await Promise.all([
-          fetch(
-            `/api/overall-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
-            {
-              method: 'GET',
-              headers: {
-                Authorization: `Bearer ${session.accessToken}`,
-              },
-            }
-          ),
-          fetch(
-            `/api/analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
-            {
-              method: 'GET',
-              headers: {
-                Authorization: `Bearer ${session.accessToken}`,
-              },
-            }
-          ),
-          fetch(
-            `/api/daily-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
-            {
-              method: 'GET',
-              headers: {
-                Authorization: `Bearer ${session.accessToken}`,
-              },
-            }
-          ),
-        ])
+      // Fetch all four analytics types in parallel
+      const [
+        overallResponse,
+        aggregateResponse,
+        monthlyResponse,
+        dailyResponse,
+      ] = await Promise.all([
+        fetch(
+          `/api/overall-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${session.accessToken}`,
+            },
+          }
+        ),
+        fetch(
+          `/api/analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${session.accessToken}`,
+            },
+          }
+        ),
+        fetch(
+          `/api/monthly-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${session.accessToken}`,
+            },
+          }
+        ),
+        fetch(
+          `/api/daily-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${session.accessToken}`,
+            },
+          }
+        ),
+      ])
 
       if (!overallResponse.ok) {
         const errorData = await overallResponse.json()
@@ -216,6 +232,13 @@ export default function Home() {
         throw new Error(errorData.error || 'Failed to fetch analytics data')
       }
 
+      if (!monthlyResponse.ok) {
+        const errorData = await monthlyResponse.json()
+        throw new Error(
+          errorData.error || 'Failed to fetch monthly analytics data'
+        )
+      }
+
       if (!dailyResponse.ok) {
         const errorData = await dailyResponse.json()
         throw new Error(
@@ -225,15 +248,18 @@ export default function Home() {
 
       const overallResult = await overallResponse.json()
       const aggregateResult = await aggregateResponse.json()
+      const monthlyResult = await monthlyResponse.json()
       const dailyResult = await dailyResponse.json()
 
       setOverallData(overallResult)
       setData(aggregateResult)
+      setMonthlyData(monthlyResult)
       setDailyData(dailyResult)
 
-      // Fetch geo data for all pivot values from both datasets
+      // Fetch geo data for all pivot values from all datasets
       const allElements = [
         ...(aggregateResult.elements || []),
+        ...(monthlyResult.elements || []),
         ...(dailyResult.aggregated || []),
         ...dailyResult.dailyData.flatMap(
           (day: { elements?: AnalyticsElement[] }) => day.elements || []
@@ -312,35 +338,52 @@ export default function Home() {
                 🎯 API Strategy Analysis Overview
               </h3>
               <p className='text-sm text-blue-800 leading-relaxed mb-3'>
-                This analysis compares three distinct LinkedIn Marketing API
+                This analysis compares four distinct LinkedIn Marketing API
                 approaches to help you choose the optimal strategy for your
                 reporting requirements:
               </p>
-              <div className='grid grid-cols-1 md:grid-cols-3 gap-3 text-xs'>
-                <div className='bg-white p-2 rounded border-l-2 border-blue-500'>
-                  <strong className='text-blue-800'>
-                    📊 Benchmark Strategy:
-                  </strong>
-                  <span className='text-blue-600'>
-                    {' '}
-                    Campaign Manager alignment
-                  </span>
+              <div className='grid grid-cols-1 md:grid-cols-4 gap-3 text-xs auto-rows-fr'>
+                <div className='bg-white p-3 rounded border-l-2 border-blue-500 flex items-center justify-center'>
+                  <div>
+                    <strong className='text-blue-800'>
+                      📊 Benchmark Strategy:
+                    </strong>
+                    <span className='text-blue-600'>
+                      {' '}
+                      Campaign Manager alignment
+                    </span>
+                  </div>
                 </div>
-                <div className='bg-white p-2 rounded border-l-2 border-green-500'>
-                  <strong className='text-green-800'>
-                    ✅ Production Strategy:
-                  </strong>
-                  <span className='text-green-600'>
-                    {' '}
-                    Demographic insights with acceptable variance
-                  </span>
+                <div className='bg-white p-3 rounded border-l-2 border-green-500 flex items-center justify-center'>
+                  <div>
+                    <strong className='text-green-800'>
+                      ✅ Production Strategy:
+                    </strong>
+                    <span className='text-green-600'>
+                      {' '}
+                      Demographic insights with acceptable variance
+                    </span>
+                  </div>
                 </div>
-                <div className='bg-white p-2 rounded border-l-2 border-red-500'>
-                  <strong className='text-red-800'>⚠️ Accuracy Risk:</strong>
-                  <span className='text-red-600'>
-                    {' '}
-                    Data loss through daily aggregation
-                  </span>
+                <div className='bg-white p-3 rounded border-l-2 border-purple-500 flex items-center justify-center'>
+                  <div>
+                    <strong className='text-purple-800'>
+                      📅 Time-Series Strategy:
+                    </strong>
+                    <span className='text-purple-600'>
+                      {' '}
+                      Monthly trends with demographic insights
+                    </span>
+                  </div>
+                </div>
+                <div className='bg-white p-3 rounded border-l-2 border-red-500 flex items-center justify-center'>
+                  <div>
+                    <strong className='text-red-800'>⚠️ Accuracy Risk:</strong>
+                    <span className='text-red-600'>
+                      {' '}
+                      Data loss through daily aggregation
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -766,6 +809,202 @@ export default function Home() {
               </div>
             )}
 
+            {monthlyData && (
+              <div className='mt-8 bg-white shadow overflow-hidden sm:rounded-lg'>
+                <div className='px-4 py-5 sm:px-6'>
+                  <h3 className='text-lg leading-6 font-medium text-gray-900'>
+                    Monthly Breakdown - Single API Call
+                  </h3>
+                  <p className='mt-1 max-w-2xl text-sm text-gray-500'>
+                    Campaign analytics data for ID: {campaignId} broken down by
+                    month and geographic regions (timeGranularity=MONTHLY with
+                    pivot)
+                  </p>
+                  <div className='mt-2 text-sm text-blue-600'>
+                    Strategy: Single API call with monthly granularity and
+                    geographic pivot | Total elements:{' '}
+                    {monthlyData.elements.length} | Total impressions:{' '}
+                    {monthlyData.elements
+                      .reduce((sum, el) => sum + el.impressions, 0)
+                      .toLocaleString()}
+                  </div>
+                </div>
+
+                <div className='overflow-x-auto'>
+                  <table className='min-w-full divide-y divide-gray-200'>
+                    <thead className='bg-gray-50'>
+                      <tr>
+                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                          Date Range
+                        </th>
+                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                          Geographic Region
+                        </th>
+                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                          Impressions
+                        </th>
+                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                          Clicks
+                        </th>
+                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                          Cost
+                        </th>
+                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                          Company Page Clicks
+                        </th>
+                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
+                          Engagement
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className='bg-white divide-y divide-gray-200'>
+                      {monthlyData.elements.map((element, index) => (
+                        <tr key={index} className='hover:bg-gray-50'>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {formatDateRange(element.dateRange)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
+                            <div className='space-y-1'>
+                              {element.pivotValues.map((pv, pvIndex) => {
+                                const match = pv.match(/urn:li:geo:(\d+)/)
+                                const geoId = match ? match[1] : ''
+                                const geoName = formatPivotValue(pv)
+                                const isLoading = geoId && geoLoading.has(geoId)
+                                const isGeoId = geoName.startsWith('Geo: ')
+
+                                return (
+                                  <div
+                                    key={pvIndex}
+                                    className='flex items-center space-x-2'
+                                  >
+                                    {isLoading && (
+                                      <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
+                                    )}
+                                    <span
+                                      className={
+                                        isLoading || isGeoId
+                                          ? 'text-gray-400'
+                                          : 'text-gray-900 font-medium'
+                                      }
+                                    >
+                                      {geoName}
+                                    </span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.impressions.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.clicks}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {formatCurrency(element.costInLocalCurrency)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.companyPageClicks}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            <div className='text-xs space-y-1'>
+                              <div>👍 {element.likes} likes</div>
+                              <div>💬 {element.comments} comments</div>
+                              <div>🔄 {element.shares} shares</div>
+                              <div>➕ {element.follows} follows</div>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+
+                      {/* Totals Row */}
+                      <tr className='bg-blue-50 font-semibold border-t-2 border-blue-200'>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          TOTALS
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          All Months & Regions Combined
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {monthlyData.elements
+                            .reduce((sum, el) => sum + el.impressions, 0)
+                            .toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {monthlyData.elements.reduce(
+                            (sum, el) => sum + el.clicks,
+                            0
+                          )}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {formatCurrency(
+                            monthlyData.elements
+                              .reduce(
+                                (sum, el) =>
+                                  sum + parseFloat(el.costInLocalCurrency),
+                                0
+                              )
+                              .toString()
+                          )}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {monthlyData.elements.reduce(
+                            (sum, el) => sum + el.companyPageClicks,
+                            0
+                          )}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          <div className='text-xs space-y-1'>
+                            <div>
+                              👍{' '}
+                              {monthlyData.elements.reduce(
+                                (sum, el) => sum + el.likes,
+                                0
+                              )}{' '}
+                              likes
+                            </div>
+                            <div>
+                              💬{' '}
+                              {monthlyData.elements.reduce(
+                                (sum, el) => sum + el.comments,
+                                0
+                              )}{' '}
+                              comments
+                            </div>
+                            <div>
+                              🔄{' '}
+                              {monthlyData.elements.reduce(
+                                (sum, el) => sum + el.shares,
+                                0
+                              )}{' '}
+                              shares
+                            </div>
+                            <div>
+                              ➕{' '}
+                              {monthlyData.elements.reduce(
+                                (sum, el) => sum + el.follows,
+                                0
+                              )}{' '}
+                              follows
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {monthlyData.elements.length === 0 && (
+                  <div className='text-center py-8'>
+                    <p className='text-gray-500'>
+                      No monthly analytics data found for the specified date
+                      range.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {dailyData && (
               <div className='mt-8 bg-white shadow overflow-hidden sm:rounded-lg'>
                 <div className='px-4 py-5 sm:px-6'>
@@ -812,120 +1051,96 @@ export default function Home() {
                       </tr>
                     </thead>
                     <tbody className='bg-white divide-y divide-gray-200'>
-                      {dailyData.dailyData.map((day, dayIndex) => {
-                        // If no elements, show a single row with no data message
-                        if (day.elements.length === 0) {
-                          return (
-                            <tr key={dayIndex} className='hover:bg-gray-50'>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                                {day.date}
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                {day.apiStatus === 'error' ? (
-                                  <span className='text-red-600'>
-                                    ❌ API Error
-                                  </span>
-                                ) : day.apiStatus === 'no-data' ? (
-                                  <span className='text-gray-400'>
-                                    📭 No data available
-                                  </span>
-                                ) : (
-                                  <span className='text-gray-400'>-</span>
-                                )}
-                                {day.errorMessage && (
-                                  <div className='text-xs text-red-500 mt-1'>
-                                    {day.errorMessage}
-                                  </div>
-                                )}
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                0
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                0
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                $0.00
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                0
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                <div className='text-xs space-y-1'>
-                                  <div>👍 0 likes</div>
-                                  <div>💬 0 comments</div>
-                                  <div>🔄 0 shares</div>
-                                  <div>➕ 0 follows</div>
-                                </div>
-                              </td>
-                            </tr>
+                      {dailyData.dailyData
+                        .filter((day) => day.elements.length > 0) // Only show days with data
+                        .map((day, dayIndex) => {
+                          // Filter out elements with all zero values
+                          const nonZeroElements = day.elements.filter(
+                            (element) =>
+                              element.impressions > 0 ||
+                              element.clicks > 0 ||
+                              parseFloat(element.costInLocalCurrency) > 0 ||
+                              element.companyPageClicks > 0 ||
+                              element.likes > 0 ||
+                              element.comments > 0 ||
+                              element.shares > 0 ||
+                              element.follows > 0
                           )
-                        }
 
-                        // If has elements, show all of them
-                        return day.elements.map((element, elementIndex) => (
-                          <tr
-                            key={`${dayIndex}-${elementIndex}`}
-                            className='hover:bg-gray-50'
-                          >
-                            <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                              {elementIndex === 0 ? day.date : ''}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                              <div className='space-y-1'>
-                                {element.pivotValues.map((pv, pvIndex) => {
-                                  const match = pv.match(/urn:li:geo:(\d+)/)
-                                  const geoId = match ? match[1] : ''
-                                  const geoName = formatPivotValue(pv)
-                                  const isLoading =
-                                    geoId && geoLoading.has(geoId)
-                                  const isGeoId = geoName.startsWith('Geo: ')
+                          // If no non-zero elements, don't render anything for this day
+                          if (nonZeroElements.length === 0) {
+                            return null
+                          }
 
-                                  return (
-                                    <div
-                                      key={pvIndex}
-                                      className='flex items-center space-x-2'
-                                    >
-                                      {isLoading && (
-                                        <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
-                                      )}
-                                      <span
-                                        className={
-                                          isLoading || isGeoId
-                                            ? 'text-gray-400'
-                                            : 'text-gray-900 font-medium'
-                                        }
-                                      >
-                                        {geoName}
-                                      </span>
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              {element.impressions.toLocaleString()}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              {element.clicks}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              {formatCurrency(element.costInLocalCurrency)}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              {element.companyPageClicks}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              <div className='text-xs space-y-1'>
-                                <div>👍 {element.likes} likes</div>
-                                <div>💬 {element.comments} comments</div>
-                                <div>🔄 {element.shares} shares</div>
-                                <div>➕ {element.follows} follows</div>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      })}
+                          // Show all non-zero elements
+                          return nonZeroElements.map(
+                            (element, elementIndex) => (
+                              <tr
+                                key={`${dayIndex}-${elementIndex}`}
+                                className='hover:bg-gray-50'
+                              >
+                                <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
+                                  {elementIndex === 0 ? day.date : ''}
+                                </td>
+                                <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
+                                  <div className='space-y-1'>
+                                    {element.pivotValues.map((pv, pvIndex) => {
+                                      const match = pv.match(/urn:li:geo:(\d+)/)
+                                      const geoId = match ? match[1] : ''
+                                      const geoName = formatPivotValue(pv)
+                                      const isLoading =
+                                        geoId && geoLoading.has(geoId)
+                                      const isGeoId =
+                                        geoName.startsWith('Geo: ')
+
+                                      return (
+                                        <div
+                                          key={pvIndex}
+                                          className='flex items-center space-x-2'
+                                        >
+                                          {isLoading && (
+                                            <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
+                                          )}
+                                          <span
+                                            className={
+                                              isLoading || isGeoId
+                                                ? 'text-gray-400'
+                                                : 'text-gray-900 font-medium'
+                                            }
+                                          >
+                                            {geoName}
+                                          </span>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </td>
+                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                  {element.impressions.toLocaleString()}
+                                </td>
+                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                  {element.clicks}
+                                </td>
+                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                  {formatCurrency(element.costInLocalCurrency)}
+                                </td>
+                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                  {element.companyPageClicks}
+                                </td>
+                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                  <div className='text-xs space-y-1'>
+                                    <div>👍 {element.likes} likes</div>
+                                    <div>💬 {element.comments} comments</div>
+                                    <div>🔄 {element.shares} shares</div>
+                                    <div>➕ {element.follows} follows</div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          )
+                        })
+                        .flat()
+                        .filter(Boolean)}
 
                       {/* Totals Row */}
                       <tr className='bg-blue-50 font-semibold border-t-2 border-blue-200'>
@@ -1015,7 +1230,7 @@ export default function Home() {
               </div>
             )}
 
-            {overallData && data && dailyData && (
+            {overallData && data && monthlyData && dailyData && (
               <div className='mt-8 bg-gradient-to-r from-blue-50 to-green-50 shadow overflow-hidden sm:rounded-lg border-2 border-blue-200'>
                 <div className='px-4 py-5 sm:px-6'>
                   <h3 className='text-lg leading-6 font-medium text-gray-900'>
@@ -1023,16 +1238,22 @@ export default function Home() {
                   </h3>
                   <p className='mt-1 max-w-2xl text-sm text-gray-600'>
                     Compare data accuracy and implementation approaches across
-                    three distinct LinkedIn Analytics API methodologies
+                    four distinct LinkedIn Analytics API methodologies
                   </p>
                 </div>
 
                 <div className='px-4 pb-5'>
-                  <div className='grid grid-cols-1 md:grid-cols-3 gap-6'>
+                  <div
+                    className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
+                    style={{ gridTemplateRows: '1fr', minHeight: '400px' }}
+                  >
                     {/* Overall Summary */}
-                    <div className='bg-white p-4 rounded-lg shadow border-l-4 border-blue-500'>
-                      <div className='flex items-center justify-between mb-3'>
-                        <h4 className='font-semibold text-gray-900'>
+                    <div
+                      className='bg-white p-4 rounded-lg shadow border-l-4 border-blue-500 flex flex-col'
+                      style={{ minHeight: '400px' }}
+                    >
+                      <div className='mb-3'>
+                        <h4 className='font-semibold text-gray-900 mb-2'>
                           Overall Summary (timeGranularity=ALL, no pivot)
                         </h4>
                         <span className='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800'>
@@ -1046,7 +1267,7 @@ export default function Home() {
                         LinkedIn&apos;s Campaign Manager interface, making it
                         the gold standard for data reconciliation.
                       </p>
-                      <div className='space-y-2 text-sm'>
+                      <div className='space-y-2 text-sm mt-auto'>
                         <div className='flex justify-between'>
                           <span>Total Impressions:</span>
                           <span className='font-medium'>
@@ -1105,9 +1326,12 @@ export default function Home() {
                     </div>
 
                     {/* Geographic Breakdown */}
-                    <div className='bg-white p-4 rounded-lg shadow border-l-4 border-green-500'>
-                      <div className='flex items-center justify-between mb-3'>
-                        <h4 className='font-semibold text-gray-900'>
+                    <div
+                      className='bg-white p-4 rounded-lg shadow border-l-4 border-green-500 flex flex-col'
+                      style={{ minHeight: '400px' }}
+                    >
+                      <div className='mb-3'>
+                        <h4 className='font-semibold text-gray-900 mb-2'>
                           Geographic Breakdown (timeGranularity=ALL, with pivot)
                         </h4>
                         <span className='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800'>
@@ -1122,7 +1346,7 @@ export default function Home() {
                         granular breakdowns while maintaining LinkedIn&apos;s
                         professional demographic compliance standards.
                       </p>
-                      <div className='space-y-2 text-sm'>
+                      <div className='space-y-2 text-sm mt-auto'>
                         <div className='flex justify-between'>
                           <span>Total Impressions:</span>
                           <span className='font-medium'>
@@ -1180,12 +1404,175 @@ export default function Home() {
                       </div>
                     </div>
 
+                    {/* Monthly Breakdown */}
+                    <div
+                      className='bg-white p-4 rounded-lg shadow border-l-4 border-purple-500 flex flex-col'
+                      style={{ minHeight: '400px' }}
+                    >
+                      <div className='mb-3'>
+                        <h4 className='font-semibold text-gray-900 text-sm leading-tight mb-2'>
+                          Monthly Breakdown
+                          <br />
+                          <span className='text-xs text-gray-600'>
+                            (timeGranularity=MONTHLY, with pivot)
+                          </span>
+                        </h4>
+                        <span className='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800'>
+                          ⚠️ Use with Caution
+                        </span>
+                      </div>
+                      <p className='text-xs text-gray-600 mb-3 leading-relaxed'>
+                        <strong>Caution:</strong> While providing temporal
+                        granularity, this approach exhibits{' '}
+                        {(() => {
+                          const geoTotal = data.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const monthlyTotal = monthlyData.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const reductionPercent =
+                            geoTotal > 0
+                              ? Math.round(
+                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
+                                )
+                              : 0
+
+                          let severityText = 'minimal data loss'
+                          if (reductionPercent >= 50) {
+                            severityText = 'severe data loss'
+                          } else if (reductionPercent >= 20) {
+                            severityText = 'significant data loss'
+                          } else if (reductionPercent >= 5) {
+                            severityText = 'moderate data loss'
+                          }
+
+                          return severityText
+                        })()}{' '}
+                        due to LinkedIn&apos;s demographic filtering applied at
+                        the monthly level. Cost metrics show{' '}
+                        {(() => {
+                          const geoTotal = data.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const monthlyTotal = monthlyData.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const reductionPercent =
+                            geoTotal > 0
+                              ? Math.round(
+                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
+                                )
+                              : 0
+                          return `~${reductionPercent}%`
+                        })()}{' '}
+                        reduction compared to Geographic Breakdown
+                        {(() => {
+                          const geoTotal = data.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const monthlyTotal = monthlyData.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const reductionPercent =
+                            geoTotal > 0
+                              ? Math.round(
+                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
+                                )
+                              : 0
+
+                          if (reductionPercent >= 20) {
+                            return ', indicating substantial underreporting that may impact budget reconciliation and financial accuracy'
+                          } else if (reductionPercent >= 5) {
+                            return ', which may affect budget reconciliation accuracy'
+                          } else {
+                            return ', representing acceptable variance for most use cases'
+                          }
+                        })()}
+                        .
+                      </p>
+                      <div className='space-y-2 text-sm mt-auto'>
+                        <div className='flex justify-between'>
+                          <span>Total Impressions:</span>
+                          <span className='font-medium'>
+                            {monthlyData.elements
+                              .reduce((sum, el) => sum + el.impressions, 0)
+                              .toLocaleString()}
+                          </span>
+                        </div>
+                        <div className='flex justify-between'>
+                          <span>Total Clicks:</span>
+                          <span className='font-medium'>
+                            {monthlyData.elements.reduce(
+                              (sum, el) => sum + el.clicks,
+                              0
+                            )}
+                          </span>
+                        </div>
+                        <div className='flex justify-between'>
+                          <span>Total Cost:</span>
+                          <span className='font-medium'>
+                            {formatCurrency(
+                              monthlyData.elements
+                                .reduce(
+                                  (sum, el) =>
+                                    sum + parseFloat(el.costInLocalCurrency),
+                                  0
+                                )
+                                .toString()
+                            )}
+                          </span>
+                        </div>
+                        <div className='flex justify-between'>
+                          <span>Company Page Clicks:</span>
+                          <span className='font-medium'>
+                            {monthlyData.elements.reduce(
+                              (sum, el) => sum + el.companyPageClicks,
+                              0
+                            )}
+                          </span>
+                        </div>
+                        <div className='flex justify-between'>
+                          <span>Total Engagement:</span>
+                          <span className='font-medium'>
+                            {monthlyData.elements.reduce(
+                              (sum, el) =>
+                                sum +
+                                el.likes +
+                                el.comments +
+                                el.shares +
+                                el.follows,
+                              0
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Daily Totals */}
-                    <div className='bg-white p-4 rounded-lg shadow border-l-4 border-red-500'>
-                      <div className='flex items-center justify-between mb-3'>
-                        <h4 className='font-semibold text-gray-900'>
-                          Daily API Calls Sum (timeGranularity=DAILY, with
-                          pivot)
+                    <div
+                      className='bg-white p-4 rounded-lg shadow border-l-4 border-red-500 flex flex-col'
+                      style={{ minHeight: '400px' }}
+                    >
+                      <div className='mb-3'>
+                        <h4 className='font-semibold text-gray-900 text-sm leading-tight mb-2'>
+                          Daily API Calls Sum
+                          <br />
+                          <span className='text-xs text-gray-600'>
+                            (timeGranularity=DAILY, with pivot)
+                          </span>
                         </h4>
                         <span className='inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800'>
                           ⚠️ Not Recommended
@@ -1199,7 +1586,7 @@ export default function Home() {
                         daily data compounds data loss, making totals unreliable
                         for business decisions.
                       </p>
-                      <div className='space-y-2 text-sm'>
+                      <div className='space-y-2 text-sm mt-auto'>
                         <div className='flex justify-between'>
                           <span>Total Impressions:</span>
                           <span className='font-medium'>
@@ -1265,7 +1652,7 @@ export default function Home() {
                     </h4>
                     <div className='text-sm text-yellow-700'>
                       {(() => {
-                        // Calculate totals for each metric from all three strategies
+                        // Calculate totals for each metric from all four strategies
                         const overallImpressions = overallData.elements.reduce(
                           (sum, el) => sum + el.impressions,
                           0
@@ -1319,6 +1706,33 @@ export default function Home() {
                           0
                         )
 
+                        const monthlyImpressions = monthlyData.elements.reduce(
+                          (sum, el) => sum + el.impressions,
+                          0
+                        )
+                        const monthlyClicks = monthlyData.elements.reduce(
+                          (sum, el) => sum + el.clicks,
+                          0
+                        )
+                        const monthlyCost = monthlyData.elements.reduce(
+                          (sum, el) => sum + parseFloat(el.costInLocalCurrency),
+                          0
+                        )
+                        const monthlyCompanyPageClicks =
+                          monthlyData.elements.reduce(
+                            (sum, el) => sum + el.companyPageClicks,
+                            0
+                          )
+                        const monthlyEngagement = monthlyData.elements.reduce(
+                          (sum, el) =>
+                            sum +
+                            el.likes +
+                            el.comments +
+                            el.shares +
+                            el.follows,
+                          0
+                        )
+
                         const dailyImpressions = dailyData.aggregated.reduce(
                           (sum, el) => sum + el.impressions,
                           0
@@ -1346,16 +1760,25 @@ export default function Home() {
                           0
                         )
 
-                        // Calculate differences for all metrics
+                        // Calculate differences for all metrics between all four strategies
                         const impressionDiffs = {
                           overallVsAggregate: Math.abs(
                             overallImpressions - aggregateImpressions
                           ),
+                          overallVsMonthly: Math.abs(
+                            overallImpressions - monthlyImpressions
+                          ),
                           overallVsDaily: Math.abs(
                             overallImpressions - dailyImpressions
                           ),
+                          aggregateVsMonthly: Math.abs(
+                            aggregateImpressions - monthlyImpressions
+                          ),
                           aggregateVsDaily: Math.abs(
                             aggregateImpressions - dailyImpressions
+                          ),
+                          monthlyVsDaily: Math.abs(
+                            monthlyImpressions - dailyImpressions
                           ),
                         }
 
@@ -1363,18 +1786,30 @@ export default function Home() {
                           overallVsAggregate: Math.abs(
                             overallClicks - aggregateClicks
                           ),
+                          overallVsMonthly: Math.abs(
+                            overallClicks - monthlyClicks
+                          ),
                           overallVsDaily: Math.abs(overallClicks - dailyClicks),
+                          aggregateVsMonthly: Math.abs(
+                            aggregateClicks - monthlyClicks
+                          ),
                           aggregateVsDaily: Math.abs(
                             aggregateClicks - dailyClicks
                           ),
+                          monthlyVsDaily: Math.abs(monthlyClicks - dailyClicks),
                         }
 
                         const costDiffs = {
                           overallVsAggregate: Math.abs(
                             overallCost - aggregateCost
                           ),
+                          overallVsMonthly: Math.abs(overallCost - monthlyCost),
                           overallVsDaily: Math.abs(overallCost - dailyCost),
+                          aggregateVsMonthly: Math.abs(
+                            aggregateCost - monthlyCost
+                          ),
                           aggregateVsDaily: Math.abs(aggregateCost - dailyCost),
+                          monthlyVsDaily: Math.abs(monthlyCost - dailyCost),
                         }
 
                         const companyPageClickDiffs = {
@@ -1382,11 +1817,21 @@ export default function Home() {
                             overallCompanyPageClicks -
                               aggregateCompanyPageClicks
                           ),
+                          overallVsMonthly: Math.abs(
+                            overallCompanyPageClicks - monthlyCompanyPageClicks
+                          ),
                           overallVsDaily: Math.abs(
                             overallCompanyPageClicks - dailyCompanyPageClicks
                           ),
+                          aggregateVsMonthly: Math.abs(
+                            aggregateCompanyPageClicks -
+                              monthlyCompanyPageClicks
+                          ),
                           aggregateVsDaily: Math.abs(
                             aggregateCompanyPageClicks - dailyCompanyPageClicks
+                          ),
+                          monthlyVsDaily: Math.abs(
+                            monthlyCompanyPageClicks - dailyCompanyPageClicks
                           ),
                         }
 
@@ -1394,11 +1839,20 @@ export default function Home() {
                           overallVsAggregate: Math.abs(
                             overallEngagement - aggregateEngagement
                           ),
+                          overallVsMonthly: Math.abs(
+                            overallEngagement - monthlyEngagement
+                          ),
                           overallVsDaily: Math.abs(
                             overallEngagement - dailyEngagement
                           ),
+                          aggregateVsMonthly: Math.abs(
+                            aggregateEngagement - monthlyEngagement
+                          ),
                           aggregateVsDaily: Math.abs(
                             aggregateEngagement - dailyEngagement
+                          ),
+                          monthlyVsDaily: Math.abs(
+                            monthlyEngagement - dailyEngagement
                           ),
                         }
 
@@ -1422,7 +1876,7 @@ export default function Home() {
 
                         return allMatch ? (
                           <p>
-                            ✅ Perfect match! All three API strategies return
+                            ✅ Perfect match! All four API strategies return
                             identical totals across all metrics.
                           </p>
                         ) : (
@@ -1442,12 +1896,24 @@ export default function Home() {
                                     {impressionDiffs.overallVsAggregate.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Overall vs Monthly:{' '}
+                                    {impressionDiffs.overallVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Overall vs Daily:{' '}
                                     {impressionDiffs.overallVsDaily.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Geographic vs Monthly:{' '}
+                                    {impressionDiffs.aggregateVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Geographic vs Daily:{' '}
                                     {impressionDiffs.aggregateVsDaily.toLocaleString()}
+                                  </li>
+                                  <li>
+                                    • Monthly vs Daily:{' '}
+                                    {impressionDiffs.monthlyVsDaily.toLocaleString()}
                                   </li>
                                 </ul>
                               </div>
@@ -1462,12 +1928,24 @@ export default function Home() {
                                     {clickDiffs.overallVsAggregate.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Overall vs Monthly:{' '}
+                                    {clickDiffs.overallVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Overall vs Daily:{' '}
                                     {clickDiffs.overallVsDaily.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Geographic vs Monthly:{' '}
+                                    {clickDiffs.aggregateVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Geographic vs Daily:{' '}
                                     {clickDiffs.aggregateVsDaily.toLocaleString()}
+                                  </li>
+                                  <li>
+                                    • Monthly vs Daily:{' '}
+                                    {clickDiffs.monthlyVsDaily.toLocaleString()}
                                   </li>
                                 </ul>
                               </div>
@@ -1482,12 +1960,24 @@ export default function Home() {
                                     {costDiffs.overallVsAggregate.toFixed(2)}
                                   </li>
                                   <li>
+                                    • Overall vs Monthly: $
+                                    {costDiffs.overallVsMonthly.toFixed(2)}
+                                  </li>
+                                  <li>
                                     • Overall vs Daily: $
                                     {costDiffs.overallVsDaily.toFixed(2)}
                                   </li>
                                   <li>
+                                    • Geographic vs Monthly: $
+                                    {costDiffs.aggregateVsMonthly.toFixed(2)}
+                                  </li>
+                                  <li>
                                     • Geographic vs Daily: $
                                     {costDiffs.aggregateVsDaily.toFixed(2)}
+                                  </li>
+                                  <li>
+                                    • Monthly vs Daily: $
+                                    {costDiffs.monthlyVsDaily.toFixed(2)}
                                   </li>
                                 </ul>
                               </div>
@@ -1502,12 +1992,24 @@ export default function Home() {
                                     {companyPageClickDiffs.overallVsAggregate.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Overall vs Monthly:{' '}
+                                    {companyPageClickDiffs.overallVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Overall vs Daily:{' '}
                                     {companyPageClickDiffs.overallVsDaily.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Geographic vs Monthly:{' '}
+                                    {companyPageClickDiffs.aggregateVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Geographic vs Daily:{' '}
                                     {companyPageClickDiffs.aggregateVsDaily.toLocaleString()}
+                                  </li>
+                                  <li>
+                                    • Monthly vs Daily:{' '}
+                                    {companyPageClickDiffs.monthlyVsDaily.toLocaleString()}
                                   </li>
                                 </ul>
                               </div>
@@ -1522,12 +2024,24 @@ export default function Home() {
                                     {engagementDiffs.overallVsAggregate.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Overall vs Monthly:{' '}
+                                    {engagementDiffs.overallVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Overall vs Daily:{' '}
                                     {engagementDiffs.overallVsDaily.toLocaleString()}
                                   </li>
                                   <li>
+                                    • Geographic vs Monthly:{' '}
+                                    {engagementDiffs.aggregateVsMonthly.toLocaleString()}
+                                  </li>
+                                  <li>
                                     • Geographic vs Daily:{' '}
                                     {engagementDiffs.aggregateVsDaily.toLocaleString()}
+                                  </li>
+                                  <li>
+                                    • Monthly vs Daily:{' '}
+                                    {engagementDiffs.monthlyVsDaily.toLocaleString()}
                                   </li>
                                 </ul>
                               </div>
@@ -1571,7 +2085,7 @@ export default function Home() {
                     <h4 className='font-semibold text-blue-800 mb-3'>
                       🎯 Professional Implementation Recommendations
                     </h4>
-                    <div className='grid grid-cols-1 md:grid-cols-3 gap-4 text-sm'>
+                    <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm'>
                       <div className='bg-white p-3 rounded-lg border-l-4 border-blue-500'>
                         <h5 className='font-semibold text-blue-800 mb-2'>
                           📊 Benchmark Strategy
@@ -1595,15 +2109,120 @@ export default function Home() {
                           decisions.
                         </p>
                       </div>
+                      <div className='bg-white p-3 rounded-lg border-l-4 border-orange-500'>
+                        <h5 className='font-semibold text-orange-800 mb-2'>
+                          ⚠️ Moderate Risk Strategy
+                        </h5>
+                        <p className='text-orange-700 text-xs leading-relaxed'>
+                          <strong>Monthly Breakdown</strong> shows{' '}
+                          {(() => {
+                            const geoTotal = data.elements.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const monthlyTotal = monthlyData.elements.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const reductionPercent =
+                              geoTotal > 0
+                                ? Math.round(
+                                    ((geoTotal - monthlyTotal) / geoTotal) * 100
+                                  )
+                                : 0
+
+                            let severityText = 'minimal data variance'
+                            if (reductionPercent >= 50) {
+                              severityText = 'severe data loss'
+                            } else if (reductionPercent >= 20) {
+                              severityText = 'significant data loss'
+                            } else if (reductionPercent >= 5) {
+                              severityText = 'moderate data loss'
+                            }
+
+                            return severityText
+                          })()}{' '}
+                          with{' '}
+                          {(() => {
+                            const geoTotal = data.elements.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const monthlyTotal = monthlyData.elements.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const reductionPercent =
+                              geoTotal > 0
+                                ? Math.round(
+                                    ((geoTotal - monthlyTotal) / geoTotal) * 100
+                                  )
+                                : 0
+                            return `~${reductionPercent}%`
+                          })()}{' '}
+                          cost{' '}
+                          {(() => {
+                            const geoTotal = data.elements.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const monthlyTotal = monthlyData.elements.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const reductionPercent =
+                              geoTotal > 0
+                                ? Math.round(
+                                    ((geoTotal - monthlyTotal) / geoTotal) * 100
+                                  )
+                                : 0
+
+                            if (reductionPercent >= 20) {
+                              return 'underreporting. Use with significant caution when temporal granularity is essential, and implement comprehensive validation against benchmark totals for financial accuracy'
+                            } else if (reductionPercent >= 5) {
+                              return 'variance. Use with caution when temporal granularity is essential, but implement additional validation against benchmark totals for financial accuracy'
+                            } else {
+                              return 'difference. Generally acceptable for temporal analysis use cases, though validation against benchmark totals is still recommended'
+                            }
+                          })()}
+                          .
+                        </p>
+                      </div>
                       <div className='bg-white p-3 rounded-lg border-l-4 border-red-500'>
                         <h5 className='font-semibold text-red-800 mb-2'>
-                          ⚠️ Avoid This Strategy
+                          ❌ High Risk Strategy
                         </h5>
                         <p className='text-red-700 text-xs leading-relaxed'>
-                          <strong>Daily API Calls Sum</strong> compounds data
-                          loss through daily filtering. The aggregated results
-                          from multiple filtered datasets create unreliable
-                          totals that may mislead business decisions.
+                          <strong>Daily API Calls Sum</strong> exhibits severe
+                          data loss with{' '}
+                          {(() => {
+                            const geoTotal = data.elements.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const dailyTotal = dailyData.aggregated.reduce(
+                              (sum, el) =>
+                                sum + parseFloat(el.costInLocalCurrency),
+                              0
+                            )
+                            const reductionPercent =
+                              geoTotal > 0
+                                ? Math.round(
+                                    ((geoTotal - dailyTotal) / geoTotal) * 100
+                                  )
+                                : 0
+                            return `~${reductionPercent}%`
+                          })()}{' '}
+                          cost underreporting. The compounded filtering from
+                          multiple daily API calls creates unreliable totals
+                          that may severely mislead business decisions.
                         </p>
                       </div>
                     </div>
@@ -1613,8 +2232,50 @@ export default function Home() {
                         strategies are not implementation errors but reflect
                         LinkedIn&apos;s privacy-first approach to professional
                         demographic reporting. Choose your strategy based on
-                        your specific reporting requirements and acceptable data
-                        variance levels.
+                        your specific reporting requirements: Overall for
+                        validation, Geographic for demographics, Monthly with
+                        caution for time-series (expect{' '}
+                        {(() => {
+                          const geoTotal = data.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const monthlyTotal = monthlyData.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const monthlyReductionPercent =
+                            geoTotal > 0
+                              ? Math.round(
+                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
+                                )
+                              : 0
+                          return `~${monthlyReductionPercent}%`
+                        })()}{' '}
+                        cost underreporting), and avoid Daily aggregation due to
+                        severe data loss (
+                        {(() => {
+                          const geoTotal = data.elements.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const dailyTotal = dailyData.aggregated.reduce(
+                            (sum, el) =>
+                              sum + parseFloat(el.costInLocalCurrency),
+                            0
+                          )
+                          const dailyReductionPercent =
+                            geoTotal > 0
+                              ? Math.round(
+                                  ((geoTotal - dailyTotal) / geoTotal) * 100
+                                )
+                              : 0
+                          return `~${dailyReductionPercent}%`
+                        })()}{' '}
+                        cost underreporting).
                       </p>
                     </div>
                   </div>
