@@ -63,8 +63,22 @@ export default function Home() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const [campaignId, setCampaignId] = useState('354458684')
-  const [startDate, setStartDate] = useState('2025-05-24')
-  const [endDate, setEndDate] = useState('2025-06-22')
+
+  // Calculate default date range: 90 days before today to today
+  const getDefaultDates = () => {
+    const today = new Date()
+    const start = new Date(today)
+    start.setDate(today.getDate() - 89) // Use 89 to get exactly 90 days inclusive
+
+    return {
+      startDate: start.toISOString().split('T')[0],
+      endDate: today.toISOString().split('T')[0],
+    }
+  }
+
+  const defaultDates = getDefaultDates()
+  const [startDate, setStartDate] = useState(defaultDates.startDate)
+  const [endDate, setEndDate] = useState(defaultDates.endDate)
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState<LinkedInAnalyticsResponse | null>(null)
   const [overallData, setOverallData] =
