@@ -664,6 +664,80 @@ export default function Home() {
                           </td>
                         </tr>
                       ))}
+
+                      {/* Totals Row */}
+                      <tr className='bg-blue-50 font-semibold border-t-2 border-blue-200'>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          TOTALS
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          All Regions Combined
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {data.elements
+                            .reduce((sum, el) => sum + el.impressions, 0)
+                            .toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {data.elements.reduce(
+                            (sum, el) => sum + el.clicks,
+                            0
+                          )}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {formatCurrency(
+                            data.elements
+                              .reduce(
+                                (sum, el) =>
+                                  sum + parseFloat(el.costInLocalCurrency),
+                                0
+                              )
+                              .toString()
+                          )}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {data.elements.reduce(
+                            (sum, el) => sum + el.companyPageClicks,
+                            0
+                          )}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          <div className='text-xs space-y-1'>
+                            <div>
+                              👍{' '}
+                              {data.elements.reduce(
+                                (sum, el) => sum + el.likes,
+                                0
+                              )}{' '}
+                              likes
+                            </div>
+                            <div>
+                              💬{' '}
+                              {data.elements.reduce(
+                                (sum, el) => sum + el.comments,
+                                0
+                              )}{' '}
+                              comments
+                            </div>
+                            <div>
+                              🔄{' '}
+                              {data.elements.reduce(
+                                (sum, el) => sum + el.shares,
+                                0
+                              )}{' '}
+                              shares
+                            </div>
+                            <div>
+                              ➕{' '}
+                              {data.elements.reduce(
+                                (sum, el) => sum + el.follows,
+                                0
+                              )}{' '}
+                              follows
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
