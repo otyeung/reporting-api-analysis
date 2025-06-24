@@ -4,6 +4,13 @@ import { useState, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import TokenStatusComponent from './components/TokenStatusComponent'
+import {
+  generateOverallCSV,
+  generateGeographicCSV,
+  generateMonthlyCSV,
+  generateDailyCSV,
+  downloadCSV,
+} from '../utils/csv-export'
 
 interface DateRange {
   start: {
@@ -311,6 +318,35 @@ export default function Home() {
       '0'
     )}-${String(dateRange.end.day).padStart(2, '0')}`
     return start === end ? start : `${start} to ${end}`
+  }
+
+  // CSV Download Handlers
+  const handleDownloadOverall = () => {
+    if (!overallData) return
+    const csvContent = generateOverallCSV(overallData, geoData)
+    const filename = `linkedin-analytics-overall-${campaignId}-${startDate}-to-${endDate}.csv`
+    downloadCSV(csvContent, filename)
+  }
+
+  const handleDownloadGeographic = () => {
+    if (!data) return
+    const csvContent = generateGeographicCSV(data, geoData)
+    const filename = `linkedin-analytics-geographic-${campaignId}-${startDate}-to-${endDate}.csv`
+    downloadCSV(csvContent, filename)
+  }
+
+  const handleDownloadMonthly = () => {
+    if (!monthlyData) return
+    const csvContent = generateMonthlyCSV(monthlyData, geoData)
+    const filename = `linkedin-analytics-monthly-${campaignId}-${startDate}-to-${endDate}.csv`
+    downloadCSV(csvContent, filename)
+  }
+
+  const handleDownloadDaily = () => {
+    if (!dailyData) return
+    const csvContent = generateDailyCSV(dailyData, geoData)
+    const filename = `linkedin-analytics-daily-${campaignId}-${startDate}-to-${endDate}.csv`
+    downloadCSV(csvContent, filename)
   }
 
   return (
@@ -1054,90 +1090,69 @@ export default function Home() {
                       {dailyData.dailyData
                         .filter((day) => day.elements.length > 0) // Only show days with data
                         .map((day, dayIndex) => {
-                          // Filter out elements with all zero values
-                          const nonZeroElements = day.elements.filter(
-                            (element) =>
-                              element.impressions > 0 ||
-                              element.clicks > 0 ||
-                              parseFloat(element.costInLocalCurrency) > 0 ||
-                              element.companyPageClicks > 0 ||
-                              element.likes > 0 ||
-                              element.comments > 0 ||
-                              element.shares > 0 ||
-                              element.follows > 0
-                          )
+                          // Show ALL elements, including those with zero values
+                          return day.elements.map((element, elementIndex) => (
+                            <tr
+                              key={`${dayIndex}-${elementIndex}`}
+                              className='hover:bg-gray-50'
+                            >
+                              <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
+                                {elementIndex === 0 ? day.date : ''}
+                              </td>
+                              <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
+                                <div className='space-y-1'>
+                                  {element.pivotValues.map((pv, pvIndex) => {
+                                    const match = pv.match(/urn:li:geo:(\d+)/)
+                                    const geoId = match ? match[1] : ''
+                                    const geoName = formatPivotValue(pv)
+                                    const isLoading =
+                                      geoId && geoLoading.has(geoId)
+                                    const isGeoId = geoName.startsWith('Geo: ')
 
-                          // If no non-zero elements, don't render anything for this day
-                          if (nonZeroElements.length === 0) {
-                            return null
-                          }
-
-                          // Show all non-zero elements
-                          return nonZeroElements.map(
-                            (element, elementIndex) => (
-                              <tr
-                                key={`${dayIndex}-${elementIndex}`}
-                                className='hover:bg-gray-50'
-                              >
-                                <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                                  {elementIndex === 0 ? day.date : ''}
-                                </td>
-                                <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                                  <div className='space-y-1'>
-                                    {element.pivotValues.map((pv, pvIndex) => {
-                                      const match = pv.match(/urn:li:geo:(\d+)/)
-                                      const geoId = match ? match[1] : ''
-                                      const geoName = formatPivotValue(pv)
-                                      const isLoading =
-                                        geoId && geoLoading.has(geoId)
-                                      const isGeoId =
-                                        geoName.startsWith('Geo: ')
-
-                                      return (
-                                        <div
-                                          key={pvIndex}
-                                          className='flex items-center space-x-2'
+                                    return (
+                                      <div
+                                        key={pvIndex}
+                                        className='flex items-center space-x-2'
+                                      >
+                                        {isLoading && (
+                                          <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
+                                        )}
+                                        <span
+                                          className={
+                                            isLoading || isGeoId
+                                              ? 'text-gray-400'
+                                              : 'text-gray-900 font-medium'
+                                          }
                                         >
-                                          {isLoading && (
-                                            <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
-                                          )}
-                                          <span
-                                            className={
-                                              isLoading || isGeoId
-                                                ? 'text-gray-400'
-                                                : 'text-gray-900 font-medium'
-                                            }
-                                          >
-                                            {geoName}
-                                          </span>
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
-                                </td>
-                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                  {element.impressions.toLocaleString()}
-                                </td>
-                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                  {element.clicks}
-                                </td>
-                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                  {formatCurrency(element.costInLocalCurrency)}
-                                </td>
-                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                  {element.companyPageClicks}
-                                </td>
-                                <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                  <div className='text-xs space-y-1'>
-                                    <div>👍 {element.likes} likes</div>
-                                    <div>💬 {element.comments} comments</div>
-                                    <div>🔄 {element.shares} shares</div>
-                                    <div>➕ {element.follows} follows</div>
-                                  </div>
-                                </td>
-                              </tr>
-                            )
-                          )
+                                          {geoName}
+                                        </span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </td>
+                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                {element.impressions.toLocaleString()}
+                              </td>
+                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                {element.clicks}
+                              </td>
+                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                {formatCurrency(element.costInLocalCurrency)}
+                              </td>
+                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                {element.companyPageClicks}
+                              </td>
+                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                                <div className='text-xs space-y-1'>
+                                  <div>👍 {element.likes} likes</div>
+                                  <div>💬 {element.comments} comments</div>
+                                  <div>🔄 {element.shares} shares</div>
+                                  <div>➕ {element.follows} follows</div>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
                         })
                         .flat()
                         .filter(Boolean)}
@@ -1227,6 +1242,14 @@ export default function Home() {
                     </p>
                   </div>
                 )}
+
+                {/* Note about data display */}
+                <div className='px-4 py-3 bg-gray-50 border-t border-gray-200'>
+                  <p className='text-xs text-gray-600'>
+                    <strong>Note:</strong> All data points are displayed in this
+                    table, excluding rows with all zero values.
+                  </p>
+                </div>
               </div>
             )}
 
@@ -1323,6 +1346,16 @@ export default function Home() {
                           </span>
                         </div>
                       </div>
+
+                      {/* Download Button */}
+                      <div className='mt-4 pt-3 border-t border-gray-200'>
+                        <button
+                          onClick={handleDownloadOverall}
+                          className='w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2'
+                        >
+                          📊 Download CSV
+                        </button>
+                      </div>
                     </div>
 
                     {/* Geographic Breakdown */}
@@ -1401,6 +1434,16 @@ export default function Home() {
                             )}
                           </span>
                         </div>
+                      </div>
+
+                      {/* Download Button */}
+                      <div className='mt-4 pt-3 border-t border-gray-200'>
+                        <button
+                          onClick={handleDownloadGeographic}
+                          className='w-full bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2'
+                        >
+                          🌍 Download CSV
+                        </button>
                       </div>
                     </div>
 
@@ -1559,6 +1602,16 @@ export default function Home() {
                           </span>
                         </div>
                       </div>
+
+                      {/* Download Button */}
+                      <div className='mt-4 pt-3 border-t border-gray-200'>
+                        <button
+                          onClick={handleDownloadMonthly}
+                          className='w-full bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2'
+                        >
+                          📅 Download CSV
+                        </button>
+                      </div>
                     </div>
 
                     {/* Daily Totals */}
@@ -1641,6 +1694,16 @@ export default function Home() {
                             )}
                           </span>
                         </div>
+                      </div>
+
+                      {/* Download Button */}
+                      <div className='mt-4 pt-3 border-t border-gray-200'>
+                        <button
+                          onClick={handleDownloadDaily}
+                          className='w-full bg-red-600 hover:bg-red-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2'
+                        >
+                          📊 Download CSV
+                        </button>
                       </div>
                     </div>
                   </div>

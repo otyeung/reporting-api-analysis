@@ -26,7 +26,9 @@ A comprehensive Next.js application that demonstrates LinkedIn Analytics API int
 - **⚡ Real-time Data Fetching**: Parallel API calls for efficient data retrieval
 - **🌍 Geographic Mapping**: Automatic resolution of LinkedIn geo IDs to country names
 - **📈 Professional Data Visualization**: Clean, responsive comparison views with business intelligence
-- **🛡️ Comprehensive Error Handling**: Robust error handling for API calls and authentication
+- **� CSV Export Functionality**: Download analytics data in CSV format for all four API strategies
+- **📋 Data Export Options**: Export overall analytics, geographic breakdowns, monthly trends, and daily analytics
+- **�🛡️ Comprehensive Error Handling**: Robust error handling for API calls and authentication
 - **🎨 Modern UI**: Built with Tailwind CSS for responsive, professional design
 - **📱 Responsive Design**: Optimized for desktop, tablet, and mobile devices
 
@@ -422,7 +424,52 @@ The differences between strategies are primarily due to LinkedIn's Professional 
 - 🚨 Severe underreporting (20-50%+)
 - 📚 Educational demonstration only
 
-### 4. Debug & Troubleshooting Tools
+### 4. CSV Export & Data Download
+
+#### 📤 Export Functionality
+
+Once you've fetched analytics data, you can export the results in CSV format for further analysis:
+
+- **Overall Analytics CSV**: Complete summary data with all key metrics
+- **Geographic Breakdown CSV**: Country/region performance data with demographic details
+- **Monthly Trends CSV**: Time-series data showing monthly performance patterns
+- **Daily Analytics CSV**: Detailed daily breakdown (when available)
+
+#### 📋 CSV Export Features
+
+- **Automatic Filename Generation**: Files include campaign ID and date range
+- **Comprehensive Data Coverage**: All visible metrics exported
+- **Professional Formatting**: Ready for Excel, Google Sheets, or data analysis tools
+- **Timestamp Inclusion**: Export timestamps for audit trails
+
+#### 🔧 How to Export Data
+
+1. **Fetch Analytics Data**: Complete the analysis workflow first
+2. **Locate Download Buttons**: Each analysis section has a dedicated "Download CSV" button
+3. **Select Export Type**: Choose from Overall, Geographic, Monthly, or Daily exports
+4. **Download**: CSV files are automatically downloaded to your browser's download folder
+
+#### 📁 CSV File Structure
+
+**Overall Analytics CSV includes:**
+
+- Campaign metrics (impressions, clicks, cost)
+- Calculated rates (CTR, CPM, CPC)
+- Performance indicators
+
+**Geographic CSV includes:**
+
+- Country/region breakdown
+- Regional performance metrics
+- Geographic demographic data
+
+**Monthly CSV includes:**
+
+- Time-series data points
+- Monthly trend analysis
+- Period-over-period comparisons
+
+### 5. Debug & Troubleshooting Tools
 
 - **Session Debug** (`/session-debug`): Inspect authentication session details
 - **Token Inspector** (`/token-introspect`): Comprehensive token analysis
