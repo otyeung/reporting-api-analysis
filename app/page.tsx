@@ -1,15 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import { computeLinkedInApiVersion } from '@/lib/linkedin-api-version'
 import TokenStatusComponent from './components/TokenStatusComponent'
 import {
-  generateOverallCSV,
+  downloadCSV,
+  generateDailyCSV,
   generateGeographicCSV,
   generateMonthlyCSV,
-  generateDailyCSV,
-  downloadCSV,
+  generateOverallCSV,
 } from '../utils/csv-export'
 
 interface DateRange {
@@ -18,7 +19,7 @@ interface DateRange {
     month: number
     day: number
   }
-  end: {
+  end?: {
     year: number
     month: number
     day: number
@@ -26,25 +27,15 @@ interface DateRange {
 }
 
 interface AnalyticsElement {
-  actionClicks: number
-  viralImpressions: number
-  comments: number
-  oneClickLeads: number
   dateRange: DateRange
-  landingPageClicks: number
-  adUnitClicks: number
-  follows: number
-  oneClickLeadFormOpens: number
-  companyPageClicks: number
-  costInLocalCurrency: string
   impressions: number
-  viralFollows: number
-  sends: number
-  shares: number
-  clicks: number
-  viralClicks: number
-  pivotValues: string[]
   likes: number
+  shares: number
+  costInLocalCurrency: string
+  clicks: number
+  costInUsd: string
+  comments: number
+  pivotValues: string[]
 }
 
 interface LinkedInAnalyticsResponse {
@@ -56,30 +47,214 @@ interface LinkedInAnalyticsResponse {
   elements: AnalyticsElement[]
 }
 
-interface DailyAnalyticsResponse {
-  dailyData: {
-    date: string
-    elements: AnalyticsElement[]
-    apiStatus: 'success' | 'error' | 'no-data'
-    errorMessage?: string
-  }[]
-  aggregated: AnalyticsElement[]
+interface AggregatedMetrics {
+  impressions: number
+  clicks: number
+  costInLocalCurrency: number
+  costInUsd: number
+  likes: number
+  comments: number
+  shares: number
+}
+
+interface DifferenceGroup {
+  overallVsGeographic: number
+  overallVsMonthly: number
+  overallVsDaily: number
+  geographicVsMonthly: number
+  geographicVsDaily: number
+  monthlyVsDaily: number
+}
+
+type StrategyKey = 'overall' | 'geographic' | 'monthly' | 'daily'
+
+type CopyStrategyKey = StrategyKey | `${StrategyKey}Response`
+
+interface SortConfig {
+  column: string
+  direction: 'asc' | 'desc'
+}
+
+const ZERO_METRICS: AggregatedMetrics = {
+  impressions: 0,
+  clicks: 0,
+  costInLocalCurrency: 0,
+  costInUsd: 0,
+  likes: 0,
+  comments: 0,
+  shares: 0,
+}
+
+const parseMetricValue = (value: string) => {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const aggregateMetrics = (elements: AnalyticsElement[]): AggregatedMetrics =>
+  elements.reduce(
+    (totals, element) => ({
+      impressions: totals.impressions + element.impressions,
+      clicks: totals.clicks + element.clicks,
+      costInLocalCurrency:
+        totals.costInLocalCurrency + parseMetricValue(element.costInLocalCurrency),
+      costInUsd: totals.costInUsd + parseMetricValue(element.costInUsd),
+      likes: totals.likes + element.likes,
+      comments: totals.comments + element.comments,
+      shares: totals.shares + element.shares,
+    }),
+    ZERO_METRICS
+  )
+
+const calculateDifferenceGroup = (
+  overall: number,
+  geographic: number,
+  monthly: number,
+  daily: number
+): DifferenceGroup => ({
+  overallVsGeographic: Math.abs(overall - geographic),
+  overallVsMonthly: Math.abs(overall - monthly),
+  overallVsDaily: Math.abs(overall - daily),
+  geographicVsMonthly: Math.abs(geographic - monthly),
+  geographicVsDaily: Math.abs(geographic - daily),
+  monthlyVsDaily: Math.abs(monthly - daily),
+})
+
+const calculateReductionPercent = (baseline: number, comparison: number) =>
+  baseline > 0 ? Math.round(((baseline - comparison) / baseline) * 100) : 0
+
+const getReductionSeverity = (reductionPercent: number) => {
+  if (reductionPercent >= 50) return 'severe data loss'
+  if (reductionPercent >= 20) return 'significant data loss'
+  if (reductionPercent >= 5) return 'moderate data loss'
+  return 'minimal data variance'
+}
+
+const getMonthlyReductionNarrative = (reductionPercent: number) => {
+  if (reductionPercent >= 20) {
+    return 'underreporting. Use with significant caution when temporal granularity is essential, and implement comprehensive validation against benchmark totals for financial accuracy'
+  }
+
+  if (reductionPercent >= 5) {
+    return 'variance. Use with caution when temporal granularity is essential, but implement additional validation against benchmark totals for financial accuracy'
+  }
+
+  return 'difference. Generally acceptable for temporal analysis use cases, though validation against benchmark totals is still recommended'
+}
+
+const DIFFERENCE_LABELS: Array<[keyof DifferenceGroup, string]> = [
+  ['overallVsGeographic', 'Overall vs Geographic'],
+  ['overallVsMonthly', 'Overall vs Monthly'],
+  ['overallVsDaily', 'Overall vs Daily'],
+  ['geographicVsMonthly', 'Geographic vs Monthly'],
+  ['geographicVsDaily', 'Geographic vs Daily'],
+  ['monthlyVsDaily', 'Monthly vs Daily'],
+]
+
+const PAGE_SIZE = 10
+
+const datePartToNumber = (dp: {
+  year: number
+  month: number
+  day: number
+}): number => dp.year * 10000 + dp.month * 100 + dp.day
+
+const getElementSortValue = (
+  element: AnalyticsElement,
+  column: string,
+  geoNames: Record<string, string>
+): string | number => {
+  switch (column) {
+    case 'dateRange':
+    case 'startDate':
+      return datePartToNumber(element.dateRange.start)
+    case 'endDate':
+      return element.dateRange.end ? datePartToNumber(element.dateRange.end) : 0
+    case 'geography':
+    case 'region': {
+      const pivotValue = element.pivotValues[0] || 'All Regions'
+      const match = pivotValue.match(/urn:li:geo:(\d+)/)
+      if (match) {
+        return geoNames[match[1]] || pivotValue
+      }
+      return pivotValue
+    }
+    case 'impressions':
+      return element.impressions
+    case 'clicks':
+      return element.clicks
+    case 'costLocal':
+      return parseMetricValue(element.costInLocalCurrency)
+    case 'costUsd':
+      return parseMetricValue(element.costInUsd)
+    case 'likes':
+      return element.likes
+    case 'comments':
+      return element.comments
+    case 'shares':
+      return element.shares
+    default:
+      return 0
+  }
+}
+
+const sortElements = (
+  elements: AnalyticsElement[],
+  config: SortConfig,
+  geoNames: Record<string, string>
+): AnalyticsElement[] =>
+  [...elements].sort((a, b) => {
+    const aValue = getElementSortValue(a, config.column, geoNames)
+    const bValue = getElementSortValue(b, config.column, geoNames)
+
+    if (typeof aValue === 'string' && typeof bValue === 'string') {
+      return config.direction === 'asc'
+        ? aValue.localeCompare(bValue)
+        : bValue.localeCompare(aValue)
+    }
+
+    if (aValue < bValue) {
+      return config.direction === 'asc' ? -1 : 1
+    }
+
+    if (aValue > bValue) {
+      return config.direction === 'asc' ? 1 : -1
+    }
+
+    return 0
+  })
+
+const handleSort = (
+  currentSort: SortConfig,
+  column: string,
+  setter: (sortConfig: SortConfig) => void,
+  resetPage?: () => void
+) => {
+  if (resetPage) {
+    resetPage()
+  }
+
+  if (currentSort.column === column) {
+    setter({
+      column,
+      direction: currentSort.direction === 'asc' ? 'desc' : 'asc',
+    })
+    return
+  }
+
+  setter({ column, direction: 'desc' })
 }
 
 export default function Home() {
   const { data: session, status } = useSession()
   const router = useRouter()
-  const [campaignId, setCampaignId] = useState('362567084')
 
-  // Calculate default date range: 90 days before today to today
+  const [accountId, setAccountId] = useState('518645095')
+  const [creativeId, setCreativeId] = useState('1156418316')
+
   const getDefaultDates = () => {
-    const today = new Date()
-    const start = new Date(today)
-    start.setDate(today.getDate() - 89) // Use 89 to get exactly 90 days inclusive
-
     return {
-      startDate: start.toISOString().split('T')[0],
-      endDate: today.toISOString().split('T')[0],
+      startDate: '2026-02-19',
+      endDate: '',
     }
   }
 
@@ -90,31 +265,69 @@ export default function Home() {
   const [data, setData] = useState<LinkedInAnalyticsResponse | null>(null)
   const [overallData, setOverallData] =
     useState<LinkedInAnalyticsResponse | null>(null)
+  const [overallRawResponse, setOverallRawResponse] = useState('')
   const [monthlyData, setMonthlyData] =
     useState<LinkedInAnalyticsResponse | null>(null)
-  const [dailyData, setDailyData] = useState<DailyAnalyticsResponse | null>(
+  const [geographicRawResponse, setGeographicRawResponse] = useState('')
+  const [monthlyRawResponse, setMonthlyRawResponse] = useState('')
+  const [dailyData, setDailyData] = useState<LinkedInAnalyticsResponse | null>(
+    null
+  )
+  const [dailyRawResponse, setDailyRawResponse] = useState('')
+  const [monthlyPage, setMonthlyPage] = useState(0)
+  const [dailyPage, setDailyPage] = useState(0)
+  const [overallSort, setOverallSort] = useState<SortConfig>({
+    column: 'dateRange',
+    direction: 'desc',
+  })
+  const [geographicSort, setGeographicSort] = useState<SortConfig>({
+    column: 'dateRange',
+    direction: 'desc',
+  })
+  const [monthlySort, setMonthlySort] = useState<SortConfig>({
+    column: 'dateRange',
+    direction: 'desc',
+  })
+  const [dailySort, setDailySort] = useState<SortConfig>({
+    column: 'startDate',
+    direction: 'desc',
+  })
+  const [debugOpen, setDebugOpen] = useState<Record<string, boolean>>({})
+  const [copiedStrategy, setCopiedStrategy] = useState<CopyStrategyKey | null>(
     null
   )
   const [error, setError] = useState<string | null>(null)
   const [geoData, setGeoData] = useState<{ [key: string]: string }>({})
   const [geoLoading, setGeoLoading] = useState<Set<string>>(new Set())
+  const [customToken, setCustomToken] = useState('')
+  const [tokenInput, setTokenInput] = useState('')
+  const [tokenValidating, setTokenValidating] = useState(false)
+  const [tokenValidationResult, setTokenValidationResult] = useState<{
+    active: boolean
+    status?: string
+    scope?: string
+    validatedVia?: string
+    message?: string
+    computed?: {
+      isExpired: boolean
+      expiresInDays: number | null
+      ageInDays: number | null
+    }
+  } | null>(null)
+  const [tokenValidationError, setTokenValidationError] = useState<string | null>(
+    null
+  )
 
-  // Check authentication
+  const activeToken = customToken || session?.accessToken || ''
+
   useEffect(() => {
-    if (status === 'loading') return // Still loading
+    if (status === 'loading') return
 
     if (status === 'unauthenticated') {
       router.push('/auth/signin')
-      return
     }
   }, [status, router])
 
-  // Force re-render when geo data updates
-  useEffect(() => {
-    // This effect will trigger a re-render when geoData changes
-  }, [geoData])
-
-  // Show loading spinner while session is loading
   if (status === 'loading') {
     return (
       <div className='min-h-screen bg-gray-50 flex items-center justify-center'>
@@ -126,7 +339,6 @@ export default function Home() {
     )
   }
 
-  // If not authenticated, return null (will redirect in useEffect)
   if (status === 'unauthenticated') {
     return null
   }
@@ -141,11 +353,12 @@ export default function Home() {
     try {
       const response = await fetch(`/api/geo?id=${geoId}`, {
         headers: {
-          Authorization: `Bearer ${session?.accessToken}`,
+          Authorization: `Bearer ${activeToken}`,
         },
       })
-      const data = await response.json()
-      const countryName = data.defaultLocalizedName?.value || `Geo: ${geoId}`
+      const responseData = await response.json()
+      const countryName =
+        responseData.defaultLocalizedName?.value || `Geo: ${geoId}`
 
       setGeoData((prev) => ({ ...prev, [geoId]: countryName }))
       setGeoLoading((prev) => {
@@ -154,8 +367,8 @@ export default function Home() {
         return newSet
       })
       return countryName
-    } catch (error) {
-      console.error('Error fetching geo data:', error)
+    } catch (fetchError) {
+      console.error('Error fetching geo data:', fetchError)
       setGeoLoading((prev) => {
         const newSet = new Set(prev)
         newSet.delete(geoId)
@@ -163,6 +376,49 @@ export default function Home() {
       })
       return `Geo: ${geoId}`
     }
+  }
+
+  const handleValidateToken = async () => {
+    const trimmed = tokenInput.trim()
+    if (!trimmed) return
+
+    setTokenValidating(true)
+    setTokenValidationResult(null)
+    setTokenValidationError(null)
+
+    try {
+      const response = await fetch('/api/token-validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: trimmed }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        setTokenValidationError(result.error || 'Validation failed')
+        return
+      }
+
+      setTokenValidationResult(result)
+
+      if (result.active && !result.computed?.isExpired) {
+        setCustomToken(trimmed)
+      }
+    } catch (err) {
+      setTokenValidationError(
+        err instanceof Error ? err.message : 'Validation failed'
+      )
+    } finally {
+      setTokenValidating(false)
+    }
+  }
+
+  const handleClearCustomToken = () => {
+    setCustomToken('')
+    setTokenInput('')
+    setTokenValidationResult(null)
+    setTokenValidationError(null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -173,58 +429,56 @@ export default function Home() {
     setOverallData(null)
     setMonthlyData(null)
     setDailyData(null)
+    setOverallRawResponse('')
+    setGeographicRawResponse('')
+    setMonthlyRawResponse('')
+    setDailyRawResponse('')
+    setCopiedStrategy(null)
 
     try {
-      // Check if we have a valid session with access token
-      if (!session?.accessToken) {
+      if (!activeToken) {
         throw new Error(
-          'No valid LinkedIn access token found. Please sign in again.'
+          'No valid access token. Please sign in or paste a custom token above.'
         )
       }
 
-      // Fetch all four analytics types in parallel
+      if (!startDate) {
+        throw new Error('Start date is required.')
+      }
+
+      let query = `accountId=${accountId}&creativeId=${creativeId}&startDate=${startDate}`
+      if (endDate) query += `&endDate=${endDate}`
+
       const [
         overallResponse,
         aggregateResponse,
         monthlyResponse,
         dailyResponse,
       ] = await Promise.all([
-        fetch(
-          `/api/overall-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
-          {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${session.accessToken}`,
-            },
-          }
-        ),
-        fetch(
-          `/api/analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
-          {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${session.accessToken}`,
-            },
-          }
-        ),
-        fetch(
-          `/api/monthly-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
-          {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${session.accessToken}`,
-            },
-          }
-        ),
-        fetch(
-          `/api/daily-analytics?campaignId=${campaignId}&startDate=${startDate}&endDate=${endDate}`,
-          {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${session.accessToken}`,
-            },
-          }
-        ),
+        fetch(`/api/overall-analytics?${query}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${activeToken}`,
+          },
+        }),
+        fetch(`/api/analytics?${query}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${activeToken}`,
+          },
+        }),
+        fetch(`/api/monthly-analytics?${query}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${activeToken}`,
+          },
+        }),
+        fetch(`/api/daily-analytics-single?${query}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${activeToken}`,
+          },
+        }),
       ])
 
       if (!overallResponse.ok) {
@@ -258,19 +512,21 @@ export default function Home() {
       const monthlyResult = await monthlyResponse.json()
       const dailyResult = await dailyResponse.json()
 
+      setOverallRawResponse(JSON.stringify(overallResult, null, 2))
+      setGeographicRawResponse(JSON.stringify(aggregateResult, null, 2))
+      setMonthlyRawResponse(JSON.stringify(monthlyResult, null, 2))
+      setDailyRawResponse(JSON.stringify(dailyResult, null, 2))
       setOverallData(overallResult)
       setData(aggregateResult)
       setMonthlyData(monthlyResult)
       setDailyData(dailyResult)
+      setMonthlyPage(0)
+      setDailyPage(0)
 
-      // Fetch geo data for all pivot values from all datasets
       const allElements = [
         ...(aggregateResult.elements || []),
         ...(monthlyResult.elements || []),
-        ...(dailyResult.aggregated || []),
-        ...dailyResult.dailyData.flatMap(
-          (day: { elements?: AnalyticsElement[] }) => day.elements || []
-        ),
+        ...(dailyResult.elements || []),
       ]
 
       if (allElements.length > 0) {
@@ -284,7 +540,6 @@ export default function Home() {
           })
         })
 
-        // Fetch geo names for all unique geo IDs
         Promise.all(Array.from(geoIds).map((geoId) => fetchGeoName(geoId)))
       }
     } catch (err) {
@@ -294,13 +549,12 @@ export default function Home() {
     }
   }
 
-  const formatCurrency = (cost: string) => {
-    const num = parseFloat(cost)
-    return num > 0 ? `$${num.toFixed(2)}` : '$0.00'
+  const formatCurrency = (cost: string | number) => {
+    const num = typeof cost === 'number' ? cost : parseMetricValue(cost)
+    return `$${num.toFixed(2)}`
   }
 
   const formatPivotValue = (pivotValue: string) => {
-    // Extract the geo ID from the URN format: urn:li:geo:103644278
     const match = pivotValue.match(/urn:li:geo:(\d+)/)
     if (match) {
       const geoId = match[1]
@@ -310,44 +564,331 @@ export default function Home() {
   }
 
   const formatDateRange = (dateRange: DateRange) => {
-    const start = `${dateRange.start.year}-${String(
-      dateRange.start.month
-    ).padStart(2, '0')}-${String(dateRange.start.day).padStart(2, '0')}`
-    const end = `${dateRange.end.year}-${String(dateRange.end.month).padStart(
-      2,
-      '0'
-    )}-${String(dateRange.end.day).padStart(2, '0')}`
+    const start = `${dateRange.start.year}-${String(dateRange.start.month).padStart(2, '0')}-${String(dateRange.start.day).padStart(2, '0')}`
+
+    if (!dateRange.end) {
+      return start
+    }
+
+    const end = `${dateRange.end.year}-${String(dateRange.end.month).padStart(2, '0')}-${String(dateRange.end.day).padStart(2, '0')}`
     return start === end ? start : `${start} to ${end}`
   }
 
-  // CSV Download Handlers
+  const formatDatePart = (datePart: { year: number; month: number; day: number }) =>
+    `${datePart.year}-${String(datePart.month).padStart(2, '0')}-${String(datePart.day).padStart(2, '0')}`
+
+  const renderPivotValues = (pivotValues: string[]) => (
+    <div className='space-y-1'>
+      {pivotValues.length === 0 ? (
+        <div className='text-gray-900 font-medium'>All Regions</div>
+      ) : (
+        pivotValues.map((pivotValue, index) => {
+          const match = pivotValue.match(/urn:li:geo:(\d+)/)
+          const geoId = match ? match[1] : ''
+          const geoName = formatPivotValue(pivotValue)
+          const isLoading = geoId && geoLoading.has(geoId)
+          const isGeoId = geoName.startsWith('Geo: ')
+
+          return (
+            <div key={`${pivotValue}-${index}`} className='flex items-center space-x-2'>
+              {isLoading && (
+                <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
+              )}
+              <span
+                className={
+                  isLoading || isGeoId
+                    ? 'text-gray-400'
+                    : 'text-gray-900 font-medium'
+                }
+              >
+                {geoName}
+              </span>
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+
+  const buildCurlCommand = (strategy: StrategyKey) => {
+    const start = new Date(startDate)
+    const creativeUrn = encodeURIComponent(
+      `urn:li:sponsoredCreative:${creativeId}`
+    )
+    const accountUrn = encodeURIComponent(`urn:li:sponsoredAccount:${accountId}`)
+    let dateRangeParam = `(start:(year:${start.getFullYear()},month:${start.getMonth() + 1},day:${start.getDate()})`
+    if (endDate) {
+      const end = new Date(endDate)
+      dateRangeParam += `,end:(year:${end.getFullYear()},month:${end.getMonth() + 1},day:${end.getDate()})`
+    }
+    dateRangeParam += ')'
+    const fields =
+      'dateRange,impressions,likes,shares,costInLocalCurrency,clicks,costInUsd,comments,pivotValues'
+    const apiVersion = computeLinkedInApiVersion(new Date())
+
+    let url = 'https://api.linkedin.com/rest/adAnalytics?q=analytics'
+
+    switch (strategy) {
+      case 'overall':
+        url += '&timeGranularity=ALL'
+        break
+      case 'geographic':
+        url += '&timeGranularity=ALL&pivot=MEMBER_COUNTRY_V2'
+        break
+      case 'monthly':
+        url += '&timeGranularity=MONTHLY&pivot=MEMBER_COUNTRY_V2'
+        break
+      case 'daily':
+        url += '&timeGranularity=DAILY&pivot=MEMBER_COUNTRY_V2'
+        break
+    }
+
+    url += `&creatives=List(${creativeUrn})`
+    url += `&accounts=List(${accountUrn})`
+    url += `&dateRange=${dateRangeParam}`
+    url += `&fields=${fields}`
+
+    return `curl -X GET '${url}' \\
+  -H 'LinkedIn-Version: ${apiVersion}' \\
+  -H 'Authorization: Bearer ${activeToken}' \\
+  -H 'X-Restli-Protocol-Version: 2.0.0'`
+  }
+
+  const handleCopyContent = async (
+    content: string,
+    copyKey: CopyStrategyKey
+  ) => {
+    await navigator.clipboard.writeText(content)
+    setCopiedStrategy(copyKey)
+
+    window.setTimeout(() => {
+      setCopiedStrategy((currentStrategy) =>
+        currentStrategy === copyKey ? null : currentStrategy
+      )
+    }, 2000)
+  }
+
+  const handleCopyCurl = async (strategy: StrategyKey) => {
+    await handleCopyContent(buildCurlCommand(strategy), strategy)
+  }
+
+  const analyticsLabel = `Account: ${accountId} / Creative: ${creativeId}`
+  const filenameSuffix = endDate
+    ? `account-${accountId}-creative-${creativeId}-${startDate}-to-${endDate}.csv`
+    : `account-${accountId}-creative-${creativeId}-${startDate}-onwards.csv`
+
   const handleDownloadOverall = () => {
     if (!overallData) return
     const csvContent = generateOverallCSV(overallData, geoData)
-    const filename = `linkedin-analytics-overall-${campaignId}-${startDate}-to-${endDate}.csv`
-    downloadCSV(csvContent, filename)
+    downloadCSV(csvContent, `linkedin-analytics-overall-${filenameSuffix}`)
   }
 
   const handleDownloadGeographic = () => {
     if (!data) return
     const csvContent = generateGeographicCSV(data, geoData)
-    const filename = `linkedin-analytics-geographic-${campaignId}-${startDate}-to-${endDate}.csv`
-    downloadCSV(csvContent, filename)
+    downloadCSV(csvContent, `linkedin-analytics-geographic-${filenameSuffix}`)
   }
 
   const handleDownloadMonthly = () => {
     if (!monthlyData) return
     const csvContent = generateMonthlyCSV(monthlyData, geoData)
-    const filename = `linkedin-analytics-monthly-${campaignId}-${startDate}-to-${endDate}.csv`
-    downloadCSV(csvContent, filename)
+    downloadCSV(csvContent, `linkedin-analytics-monthly-${filenameSuffix}`)
   }
 
   const handleDownloadDaily = () => {
     if (!dailyData) return
     const csvContent = generateDailyCSV(dailyData, geoData)
-    const filename = `linkedin-analytics-daily-${campaignId}-${startDate}-to-${endDate}.csv`
-    downloadCSV(csvContent, filename)
+    downloadCSV(csvContent, `linkedin-analytics-daily-${filenameSuffix}`)
   }
+
+  const overallTotals = overallData
+    ? aggregateMetrics(overallData.elements)
+    : ZERO_METRICS
+  const geographicTotals = data ? aggregateMetrics(data.elements) : ZERO_METRICS
+  const monthlyTotals = monthlyData
+    ? aggregateMetrics(monthlyData.elements)
+    : ZERO_METRICS
+  const dailyTotals = dailyData
+    ? aggregateMetrics(dailyData.elements)
+    : ZERO_METRICS
+
+  const sortedMonthlyElements = monthlyData
+    ? sortElements(monthlyData.elements, monthlySort, geoData)
+    : []
+  const monthlyTotalRows = sortedMonthlyElements.length
+  const monthlyTotalPages = Math.max(1, Math.ceil(monthlyTotalRows / PAGE_SIZE))
+  const monthlyStartRow = monthlyPage * PAGE_SIZE
+  const monthlyEndRow = monthlyStartRow + PAGE_SIZE
+  const paginatedMonthlyElements = sortedMonthlyElements.slice(
+    monthlyStartRow,
+    monthlyEndRow
+  )
+
+  const sortedDailyElements = dailyData
+    ? sortElements(dailyData.elements, dailySort, geoData)
+    : []
+  const dailyTotalRows = sortedDailyElements.length
+  const dailyTotalPages = Math.max(1, Math.ceil(dailyTotalRows / PAGE_SIZE))
+  const dailyStartRow = dailyPage * PAGE_SIZE
+  const dailyEndRow = dailyStartRow + PAGE_SIZE
+  const paginatedDailyElements = sortedDailyElements.slice(
+    dailyStartRow,
+    dailyEndRow
+  )
+
+  const monthlyReductionPercent = calculateReductionPercent(
+    geographicTotals.costInLocalCurrency,
+    monthlyTotals.costInLocalCurrency
+  )
+  const dailyReductionPercent = calculateReductionPercent(
+    geographicTotals.costInLocalCurrency,
+    dailyTotals.costInLocalCurrency
+  )
+
+  const metricSummary = (metrics: AggregatedMetrics) => (
+    <div className='space-y-2 text-sm mt-auto'>
+      <div className='flex justify-between'>
+        <span>Impressions:</span>
+        <span className='font-medium'>{metrics.impressions.toLocaleString()}</span>
+      </div>
+      <div className='flex justify-between'>
+        <span>Clicks:</span>
+        <span className='font-medium'>{metrics.clicks.toLocaleString()}</span>
+      </div>
+      <div className='flex justify-between'>
+        <span>Cost (Local):</span>
+        <span className='font-medium'>
+          {formatCurrency(metrics.costInLocalCurrency)}
+        </span>
+      </div>
+      <div className='flex justify-between'>
+        <span>Cost (USD):</span>
+        <span className='font-medium'>{formatCurrency(metrics.costInUsd)}</span>
+      </div>
+      <div className='flex justify-between'>
+        <span>Likes:</span>
+        <span className='font-medium'>{metrics.likes.toLocaleString()}</span>
+      </div>
+      <div className='flex justify-between'>
+        <span>Comments:</span>
+        <span className='font-medium'>{metrics.comments.toLocaleString()}</span>
+      </div>
+      <div className='flex justify-between'>
+        <span>Shares:</span>
+        <span className='font-medium'>{metrics.shares.toLocaleString()}</span>
+      </div>
+    </div>
+  )
+
+  const differenceSections =
+    overallData && data && monthlyData && dailyData
+      ? [
+          {
+            title: 'Impressions',
+            values: calculateDifferenceGroup(
+              overallTotals.impressions,
+              geographicTotals.impressions,
+              monthlyTotals.impressions,
+              dailyTotals.impressions
+            ),
+            formatter: (value: number) => value.toLocaleString(),
+          },
+          {
+            title: 'Clicks',
+            values: calculateDifferenceGroup(
+              overallTotals.clicks,
+              geographicTotals.clicks,
+              monthlyTotals.clicks,
+              dailyTotals.clicks
+            ),
+            formatter: (value: number) => value.toLocaleString(),
+          },
+          {
+            title: 'Cost (Local)',
+            values: calculateDifferenceGroup(
+              overallTotals.costInLocalCurrency,
+              geographicTotals.costInLocalCurrency,
+              monthlyTotals.costInLocalCurrency,
+              dailyTotals.costInLocalCurrency
+            ),
+            formatter: (value: number) => `$${value.toFixed(2)}`,
+          },
+          {
+            title: 'Cost (USD)',
+            values: calculateDifferenceGroup(
+              overallTotals.costInUsd,
+              geographicTotals.costInUsd,
+              monthlyTotals.costInUsd,
+              dailyTotals.costInUsd
+            ),
+            formatter: (value: number) => `$${value.toFixed(2)}`,
+          },
+          {
+            title: 'Likes',
+            values: calculateDifferenceGroup(
+              overallTotals.likes,
+              geographicTotals.likes,
+              monthlyTotals.likes,
+              dailyTotals.likes
+            ),
+            formatter: (value: number) => value.toLocaleString(),
+          },
+          {
+            title: 'Comments',
+            values: calculateDifferenceGroup(
+              overallTotals.comments,
+              geographicTotals.comments,
+              monthlyTotals.comments,
+              dailyTotals.comments
+            ),
+            formatter: (value: number) => value.toLocaleString(),
+          },
+          {
+            title: 'Shares',
+            values: calculateDifferenceGroup(
+              overallTotals.shares,
+              geographicTotals.shares,
+              monthlyTotals.shares,
+              dailyTotals.shares
+            ),
+            formatter: (value: number) => value.toLocaleString(),
+          },
+        ]
+      : []
+
+  const allStrategiesMatch =
+    differenceSections.length > 0 &&
+    differenceSections.every((section) =>
+      Object.values(section.values).every((difference) => difference === 0)
+    )
+
+  const SortableHeader = ({
+    label,
+    column,
+    sortConfig,
+    onSort,
+  }: {
+    label: string
+    column: string
+    sortConfig: SortConfig
+    onSort: (column: string) => void
+  }) => (
+    <th
+      className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none'
+      onClick={() => onSort(column)}
+    >
+      <div className='flex items-center gap-1'>
+        {label}
+        <span className='text-gray-400'>
+          {sortConfig.column === column
+            ? sortConfig.direction === 'asc'
+              ? '▲'
+              : '▼'
+            : '⇅'}
+        </span>
+      </div>
+    </th>
+  )
 
   return (
     <div className='min-h-screen bg-gray-50 py-8'>
@@ -358,17 +899,114 @@ export default function Home() {
               LinkedIn Analytics API Strategy Analysis
             </h1>
             <p className='mt-1 text-sm text-gray-600'>
-              Professional comparison of three LinkedIn Marketing API
-              approaches: Benchmark validation, Production implementation, and
-              Data accuracy analysis
+              Professional comparison of four LinkedIn Marketing API
+              approaches: Benchmark validation, Production implementation,
+              time-series analysis, and daily granularity trade-offs
             </p>
           </div>
 
           <div className='p-6'>
-            {/* Token Status Component */}
             <TokenStatusComponent />
 
-            {/* Professional Analysis Description */}
+            <div className='mb-6 bg-gray-50 border border-gray-200 rounded-lg p-4'>
+              <div className='flex items-center justify-between mb-3'>
+                <h3 className='text-sm font-semibold text-gray-700'>
+                  🔑 Bring Your Own Token
+                </h3>
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                    customToken
+                      ? 'bg-purple-100 text-purple-800'
+                      : 'bg-blue-100 text-blue-800'
+                  }`}
+                >
+                  {customToken ? 'Using Custom Token' : 'Using OAuth Session Token'}
+                </span>
+              </div>
+
+              <div className='flex gap-2'>
+                <input
+                  type='password'
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  className='flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500'
+                  placeholder='Paste your LinkedIn access token here...'
+                />
+                <button
+                  type='button'
+                  onClick={handleValidateToken}
+                  disabled={tokenValidating || !tokenInput.trim()}
+                  className='px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                >
+                  {tokenValidating ? 'Validating...' : 'Validate & Save'}
+                </button>
+                {customToken && (
+                  <button
+                    type='button'
+                    onClick={handleClearCustomToken}
+                    className='px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50'
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {tokenValidationError && (
+                <div className='mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700'>
+                  ❌ {tokenValidationError}
+                </div>
+              )}
+
+              {tokenValidationResult && (
+                <div
+                  className={`mt-2 p-2 rounded text-sm ${
+                    tokenValidationResult.active &&
+                    !tokenValidationResult.computed?.isExpired
+                      ? 'bg-green-50 border border-green-200 text-green-800'
+                      : 'bg-red-50 border border-red-200 text-red-700'
+                  }`}
+                >
+                  {tokenValidationResult.active &&
+                  !tokenValidationResult.computed?.isExpired ? (
+                    <div>
+                      <div className='font-medium'>✅ Token is valid and saved</div>
+                      <div className='mt-1 text-xs space-y-1'>
+                        {tokenValidationResult.validatedVia === 'api_call' && (
+                          <div className='text-amber-700'>
+                            Validated via API call (introspection unavailable — token may belong to a different OAuth app)
+                          </div>
+                        )}
+                        {tokenValidationResult.computed?.expiresInDays != null && (
+                          <div>
+                            Expires in:{' '}
+                            {tokenValidationResult.computed.expiresInDays} days
+                          </div>
+                        )}
+                        {tokenValidationResult.scope && (
+                          <div>Scopes: {tokenValidationResult.scope}</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className='font-medium'>❌ Token is not valid</div>
+                      <div className='mt-1 text-xs'>
+                        Status: {tokenValidationResult.status || 'inactive'}
+                        {tokenValidationResult.computed?.isExpired && ' (expired)'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!customToken && (
+                <p className='mt-2 text-xs text-gray-500'>
+                  Paste a LinkedIn OAuth access token to use instead of the
+                  session token. The token will be validated before saving.
+                </p>
+              )}
+            </div>
+
             <div className='mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-200'>
               <h3 className='text-lg font-semibold text-blue-900 mb-2'>
                 🎯 API Strategy Analysis Overview
@@ -415,31 +1053,46 @@ export default function Home() {
                 <div className='bg-white p-3 rounded border-l-2 border-red-500 flex items-center justify-center'>
                   <div>
                     <strong className='text-red-800'>⚠️ Accuracy Risk:</strong>
-                    <span className='text-red-600'>
-                      {' '}
-                      Data loss through daily aggregation
-                    </span>
+                    <span className='text-red-600'> Single-call daily breakdown</span>
                   </div>
                 </div>
               </div>
             </div>
 
             <form onSubmit={handleSubmit} className='space-y-4 mb-8'>
-              <div className='grid grid-cols-1 md:grid-cols-3 gap-4'>
+              <div className='grid grid-cols-1 md:grid-cols-4 gap-4'>
                 <div>
                   <label
-                    htmlFor='campaignId'
+                    htmlFor='accountId'
                     className='block text-sm font-medium text-gray-700'
                   >
-                    Campaign ID
+                    Account ID
                   </label>
                   <input
                     type='text'
-                    id='campaignId'
-                    value={campaignId}
-                    onChange={(e) => setCampaignId(e.target.value)}
+                    id='accountId'
+                    value={accountId}
+                    onChange={(e) => setAccountId(e.target.value)}
                     className='mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
-                    placeholder='Enter campaign ID'
+                    placeholder='Enter account ID'
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor='creativeId'
+                    className='block text-sm font-medium text-gray-700'
+                  >
+                    Creative ID
+                  </label>
+                  <input
+                    type='text'
+                    id='creativeId'
+                    value={creativeId}
+                    onChange={(e) => setCreativeId(e.target.value)}
+                    className='mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
+                    placeholder='Enter creative ID'
                     required
                   />
                 </div>
@@ -474,7 +1127,6 @@ export default function Home() {
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
                     className='mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
-                    required
                   />
                 </div>
               </div>
@@ -544,11 +1196,11 @@ export default function Home() {
               <div className='mb-8 bg-white shadow overflow-hidden sm:rounded-lg'>
                 <div className='px-4 py-5 sm:px-6'>
                   <h3 className='text-lg leading-6 font-medium text-gray-900'>
-                    Campaign Summary - Overall Totals
+                    Creative Summary - Overall Totals
                   </h3>
                   <p className='mt-1 max-w-2xl text-sm text-gray-500'>
-                    Total campaign performance for ID: {campaignId} (no
-                    geographic breakdown)
+                    Total performance for {analyticsLabel} (no geographic
+                    breakdown)
                   </p>
                   <div className='mt-2 text-sm text-blue-600'>
                     Strategy: Single API call with timeGranularity=ALL and no
@@ -560,83 +1212,130 @@ export default function Home() {
                   <table className='min-w-full divide-y divide-gray-200'>
                     <thead className='bg-gray-50'>
                       <tr>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Date Range
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Total Impressions
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Total Clicks
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Total Cost
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          CTR
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          CPM
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Total Engagement
-                        </th>
+                        <SortableHeader
+                          label='Date Range'
+                          column='dateRange'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
+                        <SortableHeader
+                          label='Impressions'
+                          column='impressions'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
+                        <SortableHeader
+                          label='Clicks'
+                          column='clicks'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (Local)'
+                          column='costLocal'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (USD)'
+                          column='costUsd'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
+                        <SortableHeader
+                          label='Likes'
+                          column='likes'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
+                        <SortableHeader
+                          label='Comments'
+                          column='comments'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
+                        <SortableHeader
+                          label='Shares'
+                          column='shares'
+                          sortConfig={overallSort}
+                          onSort={(column) =>
+                            handleSort(overallSort, column, setOverallSort)
+                          }
+                        />
                       </tr>
                     </thead>
                     <tbody className='bg-white divide-y divide-gray-200'>
-                      {overallData.elements.map((element, index) => {
-                        const ctr =
-                          element.impressions > 0
-                            ? (
-                                (element.clicks / element.impressions) *
-                                100
-                              ).toFixed(2)
-                            : '0.00'
-                        const cost = parseFloat(element.costInLocalCurrency)
-                        const cpm =
-                          element.impressions > 0
-                            ? ((cost / element.impressions) * 1000).toFixed(2)
-                            : '0.00'
-                        const totalEngagement =
-                          element.likes +
-                          element.comments +
-                          element.shares +
-                          element.follows
-
-                        return (
-                          <tr key={index} className='hover:bg-gray-50'>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              {formatDateRange(element.dateRange)}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900'>
-                              {element.impressions.toLocaleString()}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900'>
-                              {element.clicks.toLocaleString()}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900'>
-                              {formatCurrency(element.costInLocalCurrency)}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              {ctr}%
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              ${cpm}
-                            </td>
-                            <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                              <div className='text-xs space-y-1'>
-                                <div className='font-medium text-gray-900'>
-                                  Total: {totalEngagement}
-                                </div>
-                                <div>👍 {element.likes} likes</div>
-                                <div>💬 {element.comments} comments</div>
-                                <div>🔄 {element.shares} shares</div>
-                                <div>➕ {element.follows} follows</div>
-                              </div>
-                            </td>
-                          </tr>
+                      {sortElements(overallData.elements, overallSort, geoData).map(
+                        (element, index) => (
+                        <tr key={index} className='hover:bg-gray-50'>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {formatDateRange(element.dateRange)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900'>
+                            {element.impressions.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900'>
+                            {element.clicks.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900'>
+                            {formatCurrency(element.costInLocalCurrency)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900'>
+                            {formatCurrency(element.costInUsd)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.likes.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.comments.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.shares.toLocaleString()}
+                          </td>
+                        </tr>
                         )
-                      })}
+                      )}
+
+                      <tr className='bg-blue-50 font-semibold border-t-2 border-blue-200'>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          TOTALS
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {overallTotals.impressions.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {overallTotals.clicks.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {formatCurrency(overallTotals.costInLocalCurrency)}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {formatCurrency(overallTotals.costInUsd)}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {overallTotals.likes.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {overallTotals.comments.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {overallTotals.shares.toLocaleString()}
+                        </td>
+                      </tr>
                     </tbody>
                   </table>
                 </div>
@@ -649,6 +1348,127 @@ export default function Home() {
                     </p>
                   </div>
                 )}
+
+                <div className='border-t border-gray-200'>
+                  <button
+                    onClick={() =>
+                      setDebugOpen((prev) => ({
+                        ...prev,
+                        overall: !prev.overall,
+                      }))
+                    }
+                    className='w-full px-4 py-2 flex items-center justify-between text-sm text-gray-600 hover:bg-gray-50'
+                  >
+                    <span className='font-medium'>🔧 Debug Session</span>
+                    <svg
+                      className={`h-4 w-4 transform transition-transform ${debugOpen.overall ? 'rotate-180' : ''}`}
+                      fill='none'
+                      viewBox='0 0 24 24'
+                      stroke='currentColor'
+                    >
+                      <path
+                        strokeLinecap='round'
+                        strokeLinejoin='round'
+                        strokeWidth={2}
+                        d='M19 9l-7 7-7-7'
+                      />
+                    </svg>
+                  </button>
+                  {debugOpen.overall && (
+                    <div className='px-4 pb-4 relative'>
+                      <button
+                        onClick={() => handleCopyCurl('overall')}
+                        className='absolute top-2 right-6 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                        title='Copy curl command'
+                      >
+                        <svg
+                          className='h-4 w-4'
+                          fill='none'
+                          viewBox='0 0 24 24'
+                          stroke='currentColor'
+                        >
+                          <path
+                            strokeLinecap='round'
+                            strokeLinejoin='round'
+                            strokeWidth={2}
+                            d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                          />
+                        </svg>
+                      </button>
+                      {copiedStrategy === 'overall' && (
+                        <div className='absolute top-3 right-16 text-xs font-medium text-green-600'>
+                          Copied!
+                        </div>
+                      )}
+                      <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap'>
+                        {buildCurlCommand('overall')}
+                      </pre>
+
+                      <div className='mt-3'>
+                        <button
+                          onClick={() =>
+                            setDebugOpen((prev) => ({
+                              ...prev,
+                              overallResponse: !prev.overallResponse,
+                            }))
+                          }
+                          className='flex items-center text-xs text-gray-500 hover:text-gray-700 mb-1'
+                        >
+                          <span>📋 API Response</span>
+                          <svg
+                            className={`ml-1 h-3 w-3 transform transition-transform ${debugOpen.overallResponse ? 'rotate-180' : ''}`}
+                            fill='none'
+                            viewBox='0 0 24 24'
+                            stroke='currentColor'
+                          >
+                            <path
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              strokeWidth={2}
+                              d='M19 9l-7 7-7-7'
+                            />
+                          </svg>
+                        </button>
+                        {debugOpen.overallResponse && (
+                          <div className='relative'>
+                            <button
+                              onClick={() =>
+                                handleCopyContent(
+                                  overallRawResponse,
+                                  'overallResponse'
+                                )
+                              }
+                              className='absolute top-2 right-2 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                              title='Copy API response'
+                            >
+                              <svg
+                                className='h-4 w-4'
+                                fill='none'
+                                viewBox='0 0 24 24'
+                                stroke='currentColor'
+                              >
+                                <path
+                                  strokeLinecap='round'
+                                  strokeLinejoin='round'
+                                  strokeWidth={2}
+                                  d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                                />
+                              </svg>
+                            </button>
+                            {copiedStrategy === 'overallResponse' && (
+                              <div className='absolute top-3 right-12 text-xs font-medium text-green-600'>
+                                Copied!
+                              </div>
+                            )}
+                            <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto'>
+                              {overallRawResponse || 'No response data available'}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -659,15 +1479,13 @@ export default function Home() {
                     Geographic Breakdown - Pivoted by Country
                   </h3>
                   <p className='mt-1 max-w-2xl text-sm text-gray-500'>
-                    Campaign analytics data for ID: {campaignId} broken down by
+                    Analytics data for {analyticsLabel} broken down by
                     geographic regions (timeGranularity=ALL with pivot)
                   </p>
                   <div className='mt-2 text-sm text-blue-600'>
                     Strategy: Single API call with pivot | Total regions:{' '}
                     {data.elements.length} | Total impressions:{' '}
-                    {data.elements
-                      .reduce((sum, el) => sum + el.impressions, 0)
-                      .toLocaleString()}
+                    {geographicTotals.impressions.toLocaleString()}
                   </div>
                 </div>
 
@@ -675,62 +1493,122 @@ export default function Home() {
                   <table className='min-w-full divide-y divide-gray-200'>
                     <thead className='bg-gray-50'>
                       <tr>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Geographic Region
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Date Range
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Impressions
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Clicks
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Cost
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Company Page Clicks
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Engagement
-                        </th>
+                        <SortableHeader
+                          label='Geographic Region'
+                          column='geography'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Date Range'
+                          column='dateRange'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Impressions'
+                          column='impressions'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Clicks'
+                          column='clicks'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (Local)'
+                          column='costLocal'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (USD)'
+                          column='costUsd'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Likes'
+                          column='likes'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Comments'
+                          column='comments'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Shares'
+                          column='shares'
+                          sortConfig={geographicSort}
+                          onSort={(column) =>
+                            handleSort(
+                              geographicSort,
+                              column,
+                              setGeographicSort
+                            )
+                          }
+                        />
                       </tr>
                     </thead>
                     <tbody className='bg-white divide-y divide-gray-200'>
-                      {data.elements.map((element, index) => (
+                      {sortElements(data.elements, geographicSort, geoData).map(
+                        (element, index) => (
                         <tr key={index} className='hover:bg-gray-50'>
                           <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                            <div className='space-y-1'>
-                              {element.pivotValues.map((pv, pvIndex) => {
-                                const match = pv.match(/urn:li:geo:(\d+)/)
-                                const geoId = match ? match[1] : ''
-                                const geoName = formatPivotValue(pv)
-                                const isLoading = geoId && geoLoading.has(geoId)
-                                const isGeoId = geoName.startsWith('Geo: ')
-
-                                return (
-                                  <div
-                                    key={pvIndex}
-                                    className='flex items-center space-x-2'
-                                  >
-                                    {isLoading && (
-                                      <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
-                                    )}
-                                    <span
-                                      className={
-                                        isLoading || isGeoId
-                                          ? 'text-gray-400'
-                                          : 'text-gray-900 font-medium'
-                                      }
-                                    >
-                                      {geoName}
-                                    </span>
-                                  </div>
-                                )
-                              })}
-                            </div>
+                            {renderPivotValues(element.pivotValues)}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
                             {formatDateRange(element.dateRange)}
@@ -739,26 +1617,27 @@ export default function Home() {
                             {element.impressions.toLocaleString()}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                            {element.clicks}
+                            {element.clicks.toLocaleString()}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
                             {formatCurrency(element.costInLocalCurrency)}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                            {element.companyPageClicks}
+                            {formatCurrency(element.costInUsd)}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                            <div className='text-xs space-y-1'>
-                              <div>👍 {element.likes} likes</div>
-                              <div>💬 {element.comments} comments</div>
-                              <div>🔄 {element.shares} shares</div>
-                              <div>➕ {element.follows} follows</div>
-                            </div>
+                            {element.likes.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.comments.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.shares.toLocaleString()}
                           </td>
                         </tr>
-                      ))}
+                        )
+                      )}
 
-                      {/* Totals Row */}
                       <tr className='bg-blue-50 font-semibold border-t-2 border-blue-200'>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
                           TOTALS
@@ -767,68 +1646,25 @@ export default function Home() {
                           All Regions Combined
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {data.elements
-                            .reduce((sum, el) => sum + el.impressions, 0)
-                            .toLocaleString()}
+                          {geographicTotals.impressions.toLocaleString()}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {data.elements.reduce(
-                            (sum, el) => sum + el.clicks,
-                            0
-                          )}
+                          {geographicTotals.clicks.toLocaleString()}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {formatCurrency(
-                            data.elements
-                              .reduce(
-                                (sum, el) =>
-                                  sum + parseFloat(el.costInLocalCurrency),
-                                0
-                              )
-                              .toString()
-                          )}
+                          {formatCurrency(geographicTotals.costInLocalCurrency)}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {data.elements.reduce(
-                            (sum, el) => sum + el.companyPageClicks,
-                            0
-                          )}
+                          {formatCurrency(geographicTotals.costInUsd)}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          <div className='text-xs space-y-1'>
-                            <div>
-                              👍{' '}
-                              {data.elements.reduce(
-                                (sum, el) => sum + el.likes,
-                                0
-                              )}{' '}
-                              likes
-                            </div>
-                            <div>
-                              💬{' '}
-                              {data.elements.reduce(
-                                (sum, el) => sum + el.comments,
-                                0
-                              )}{' '}
-                              comments
-                            </div>
-                            <div>
-                              🔄{' '}
-                              {data.elements.reduce(
-                                (sum, el) => sum + el.shares,
-                                0
-                              )}{' '}
-                              shares
-                            </div>
-                            <div>
-                              ➕{' '}
-                              {data.elements.reduce(
-                                (sum, el) => sum + el.follows,
-                                0
-                              )}{' '}
-                              follows
-                            </div>
-                          </div>
+                          {geographicTotals.likes.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {geographicTotals.comments.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {geographicTotals.shares.toLocaleString()}
                         </td>
                       </tr>
                     </tbody>
@@ -842,6 +1678,127 @@ export default function Home() {
                     </p>
                   </div>
                 )}
+
+                <div className='border-t border-gray-200'>
+                  <button
+                    onClick={() =>
+                      setDebugOpen((prev) => ({
+                        ...prev,
+                        geographic: !prev.geographic,
+                      }))
+                    }
+                    className='w-full px-4 py-2 flex items-center justify-between text-sm text-gray-600 hover:bg-gray-50'
+                  >
+                    <span className='font-medium'>🔧 Debug Session</span>
+                    <svg
+                      className={`h-4 w-4 transform transition-transform ${debugOpen.geographic ? 'rotate-180' : ''}`}
+                      fill='none'
+                      viewBox='0 0 24 24'
+                      stroke='currentColor'
+                    >
+                      <path
+                        strokeLinecap='round'
+                        strokeLinejoin='round'
+                        strokeWidth={2}
+                        d='M19 9l-7 7-7-7'
+                      />
+                    </svg>
+                  </button>
+                  {debugOpen.geographic && (
+                    <div className='px-4 pb-4 relative'>
+                      <button
+                        onClick={() => handleCopyCurl('geographic')}
+                        className='absolute top-2 right-6 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                        title='Copy curl command'
+                      >
+                        <svg
+                          className='h-4 w-4'
+                          fill='none'
+                          viewBox='0 0 24 24'
+                          stroke='currentColor'
+                        >
+                          <path
+                            strokeLinecap='round'
+                            strokeLinejoin='round'
+                            strokeWidth={2}
+                            d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                          />
+                        </svg>
+                      </button>
+                      {copiedStrategy === 'geographic' && (
+                        <div className='absolute top-3 right-16 text-xs font-medium text-green-600'>
+                          Copied!
+                        </div>
+                      )}
+                      <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap'>
+                        {buildCurlCommand('geographic')}
+                      </pre>
+
+                      <div className='mt-3'>
+                        <button
+                          onClick={() =>
+                            setDebugOpen((prev) => ({
+                              ...prev,
+                              geographicResponse: !prev.geographicResponse,
+                            }))
+                          }
+                          className='flex items-center text-xs text-gray-500 hover:text-gray-700 mb-1'
+                        >
+                          <span>📋 API Response</span>
+                          <svg
+                            className={`ml-1 h-3 w-3 transform transition-transform ${debugOpen.geographicResponse ? 'rotate-180' : ''}`}
+                            fill='none'
+                            viewBox='0 0 24 24'
+                            stroke='currentColor'
+                          >
+                            <path
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              strokeWidth={2}
+                              d='M19 9l-7 7-7-7'
+                            />
+                          </svg>
+                        </button>
+                        {debugOpen.geographicResponse && (
+                          <div className='relative'>
+                            <button
+                              onClick={() =>
+                                handleCopyContent(
+                                  geographicRawResponse,
+                                  'geographicResponse'
+                                )
+                              }
+                              className='absolute top-2 right-2 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                              title='Copy API response'
+                            >
+                              <svg
+                                className='h-4 w-4'
+                                fill='none'
+                                viewBox='0 0 24 24'
+                                stroke='currentColor'
+                              >
+                                <path
+                                  strokeLinecap='round'
+                                  strokeLinejoin='round'
+                                  strokeWidth={2}
+                                  d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                                />
+                              </svg>
+                            </button>
+                            {copiedStrategy === 'geographicResponse' && (
+                              <div className='absolute top-3 right-12 text-xs font-medium text-green-600'>
+                                Copied!
+                              </div>
+                            )}
+                            <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto'>
+                              {geographicRawResponse || 'No response data available'}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -852,17 +1809,13 @@ export default function Home() {
                     Monthly Breakdown - Single API Call
                   </h3>
                   <p className='mt-1 max-w-2xl text-sm text-gray-500'>
-                    Campaign analytics data for ID: {campaignId} broken down by
-                    month and geographic regions (timeGranularity=MONTHLY with
-                    pivot)
+                    Analytics data for {analyticsLabel} broken down by month and
+                    geographic regions (timeGranularity=MONTHLY with pivot)
                   </p>
                   <div className='mt-2 text-sm text-blue-600'>
                     Strategy: Single API call with monthly granularity and
-                    geographic pivot | Total elements:{' '}
-                    {monthlyData.elements.length} | Total impressions:{' '}
-                    {monthlyData.elements
-                      .reduce((sum, el) => sum + el.impressions, 0)
-                      .toLocaleString()}
+                    geographic pivot | Total elements: {monthlyData.elements.length}{' '}
+                    | Total impressions: {monthlyTotals.impressions.toLocaleString()}
                   </div>
                 </div>
 
@@ -870,90 +1823,131 @@ export default function Home() {
                   <table className='min-w-full divide-y divide-gray-200'>
                     <thead className='bg-gray-50'>
                       <tr>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Date Range
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Geographic Region
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Impressions
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Clicks
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Cost
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Company Page Clicks
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Engagement
-                        </th>
+                        <SortableHeader
+                          label='Date Range'
+                          column='dateRange'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Geographic Region'
+                          column='geography'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Impressions'
+                          column='impressions'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Clicks'
+                          column='clicks'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (Local)'
+                          column='costLocal'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (USD)'
+                          column='costUsd'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Likes'
+                          column='likes'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Comments'
+                          column='comments'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Shares'
+                          column='shares'
+                          sortConfig={monthlySort}
+                          onSort={(column) =>
+                            handleSort(monthlySort, column, setMonthlySort, () =>
+                              setMonthlyPage(0)
+                            )
+                          }
+                        />
                       </tr>
                     </thead>
                     <tbody className='bg-white divide-y divide-gray-200'>
-                      {monthlyData.elements.map((element, index) => (
+                      {paginatedMonthlyElements.map((element, index) => (
                         <tr key={index} className='hover:bg-gray-50'>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
                             {formatDateRange(element.dateRange)}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                            <div className='space-y-1'>
-                              {element.pivotValues.map((pv, pvIndex) => {
-                                const match = pv.match(/urn:li:geo:(\d+)/)
-                                const geoId = match ? match[1] : ''
-                                const geoName = formatPivotValue(pv)
-                                const isLoading = geoId && geoLoading.has(geoId)
-                                const isGeoId = geoName.startsWith('Geo: ')
-
-                                return (
-                                  <div
-                                    key={pvIndex}
-                                    className='flex items-center space-x-2'
-                                  >
-                                    {isLoading && (
-                                      <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
-                                    )}
-                                    <span
-                                      className={
-                                        isLoading || isGeoId
-                                          ? 'text-gray-400'
-                                          : 'text-gray-900 font-medium'
-                                      }
-                                    >
-                                      {geoName}
-                                    </span>
-                                  </div>
-                                )
-                              })}
-                            </div>
+                            {renderPivotValues(element.pivotValues)}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
                             {element.impressions.toLocaleString()}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                            {element.clicks}
+                            {element.clicks.toLocaleString()}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
                             {formatCurrency(element.costInLocalCurrency)}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                            {element.companyPageClicks}
+                            {formatCurrency(element.costInUsd)}
                           </td>
                           <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                            <div className='text-xs space-y-1'>
-                              <div>👍 {element.likes} likes</div>
-                              <div>💬 {element.comments} comments</div>
-                              <div>🔄 {element.shares} shares</div>
-                              <div>➕ {element.follows} follows</div>
-                            </div>
+                            {element.likes.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.comments.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.shares.toLocaleString()}
                           </td>
                         </tr>
                       ))}
 
-                      {/* Totals Row */}
                       <tr className='bg-blue-50 font-semibold border-t-2 border-blue-200'>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
                           TOTALS
@@ -962,68 +1956,25 @@ export default function Home() {
                           All Months & Regions Combined
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {monthlyData.elements
-                            .reduce((sum, el) => sum + el.impressions, 0)
-                            .toLocaleString()}
+                          {monthlyTotals.impressions.toLocaleString()}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {monthlyData.elements.reduce(
-                            (sum, el) => sum + el.clicks,
-                            0
-                          )}
+                          {monthlyTotals.clicks.toLocaleString()}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {formatCurrency(
-                            monthlyData.elements
-                              .reduce(
-                                (sum, el) =>
-                                  sum + parseFloat(el.costInLocalCurrency),
-                                0
-                              )
-                              .toString()
-                          )}
+                          {formatCurrency(monthlyTotals.costInLocalCurrency)}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {monthlyData.elements.reduce(
-                            (sum, el) => sum + el.companyPageClicks,
-                            0
-                          )}
+                          {formatCurrency(monthlyTotals.costInUsd)}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          <div className='text-xs space-y-1'>
-                            <div>
-                              👍{' '}
-                              {monthlyData.elements.reduce(
-                                (sum, el) => sum + el.likes,
-                                0
-                              )}{' '}
-                              likes
-                            </div>
-                            <div>
-                              💬{' '}
-                              {monthlyData.elements.reduce(
-                                (sum, el) => sum + el.comments,
-                                0
-                              )}{' '}
-                              comments
-                            </div>
-                            <div>
-                              🔄{' '}
-                              {monthlyData.elements.reduce(
-                                (sum, el) => sum + el.shares,
-                                0
-                              )}{' '}
-                              shares
-                            </div>
-                            <div>
-                              ➕{' '}
-                              {monthlyData.elements.reduce(
-                                (sum, el) => sum + el.follows,
-                                0
-                              )}{' '}
-                              follows
-                            </div>
-                          </div>
+                          {monthlyTotals.likes.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {monthlyTotals.comments.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {monthlyTotals.shares.toLocaleString()}
                         </td>
                       </tr>
                     </tbody>
@@ -1038,6 +1989,156 @@ export default function Home() {
                     </p>
                   </div>
                 )}
+
+                {monthlyTotalRows > 0 && (
+                  <div className='flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200'>
+                    <div className='text-sm text-gray-700'>
+                      Showing {monthlyStartRow + 1} to{' '}
+                      {Math.min(monthlyEndRow, monthlyTotalRows)} of{' '}
+                      {monthlyTotalRows} rows
+                    </div>
+                    <div className='flex gap-2'>
+                      <button
+                        onClick={() => setMonthlyPage((page) => page - 1)}
+                        disabled={monthlyPage === 0}
+                        className='px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed'
+                      >
+                        Previous
+                      </button>
+                      <span className='px-3 py-1 text-sm text-gray-600'>
+                        Page {monthlyPage + 1} of {monthlyTotalPages}
+                      </span>
+                      <button
+                        onClick={() => setMonthlyPage((page) => page + 1)}
+                        disabled={monthlyPage >= monthlyTotalPages - 1}
+                        className='px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed'
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className='border-t border-gray-200'>
+                  <button
+                    onClick={() =>
+                      setDebugOpen((prev) => ({
+                        ...prev,
+                        monthly: !prev.monthly,
+                      }))
+                    }
+                    className='w-full px-4 py-2 flex items-center justify-between text-sm text-gray-600 hover:bg-gray-50'
+                  >
+                    <span className='font-medium'>🔧 Debug Session</span>
+                    <svg
+                      className={`h-4 w-4 transform transition-transform ${debugOpen.monthly ? 'rotate-180' : ''}`}
+                      fill='none'
+                      viewBox='0 0 24 24'
+                      stroke='currentColor'
+                    >
+                      <path
+                        strokeLinecap='round'
+                        strokeLinejoin='round'
+                        strokeWidth={2}
+                        d='M19 9l-7 7-7-7'
+                      />
+                    </svg>
+                  </button>
+                  {debugOpen.monthly && (
+                    <div className='px-4 pb-4 relative'>
+                      <button
+                        onClick={() => handleCopyCurl('monthly')}
+                        className='absolute top-2 right-6 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                        title='Copy curl command'
+                      >
+                        <svg
+                          className='h-4 w-4'
+                          fill='none'
+                          viewBox='0 0 24 24'
+                          stroke='currentColor'
+                        >
+                          <path
+                            strokeLinecap='round'
+                            strokeLinejoin='round'
+                            strokeWidth={2}
+                            d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                          />
+                        </svg>
+                      </button>
+                      {copiedStrategy === 'monthly' && (
+                        <div className='absolute top-3 right-16 text-xs font-medium text-green-600'>
+                          Copied!
+                        </div>
+                      )}
+                      <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap'>
+                        {buildCurlCommand('monthly')}
+                      </pre>
+
+                      <div className='mt-3'>
+                        <button
+                          onClick={() =>
+                            setDebugOpen((prev) => ({
+                              ...prev,
+                              monthlyResponse: !prev.monthlyResponse,
+                            }))
+                          }
+                          className='flex items-center text-xs text-gray-500 hover:text-gray-700 mb-1'
+                        >
+                          <span>📋 API Response</span>
+                          <svg
+                            className={`ml-1 h-3 w-3 transform transition-transform ${debugOpen.monthlyResponse ? 'rotate-180' : ''}`}
+                            fill='none'
+                            viewBox='0 0 24 24'
+                            stroke='currentColor'
+                          >
+                            <path
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              strokeWidth={2}
+                              d='M19 9l-7 7-7-7'
+                            />
+                          </svg>
+                        </button>
+                        {debugOpen.monthlyResponse && (
+                          <div className='relative'>
+                            <button
+                              onClick={() =>
+                                handleCopyContent(
+                                  monthlyRawResponse,
+                                  'monthlyResponse'
+                                )
+                              }
+                              className='absolute top-2 right-2 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                              title='Copy API response'
+                            >
+                              <svg
+                                className='h-4 w-4'
+                                fill='none'
+                                viewBox='0 0 24 24'
+                                stroke='currentColor'
+                              >
+                                <path
+                                  strokeLinecap='round'
+                                  strokeLinejoin='round'
+                                  strokeWidth={2}
+                                  d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                                />
+                              </svg>
+                            </button>
+                            {copiedStrategy === 'monthlyResponse' && (
+                              <div className='absolute top-3 right-12 text-xs font-medium text-green-600'>
+                                Copied!
+                              </div>
+                            )}
+                            <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto'>
+                              {monthlyRawResponse || 'No response data available'}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1045,17 +2146,15 @@ export default function Home() {
               <div className='mt-8 bg-white shadow overflow-hidden sm:rounded-lg'>
                 <div className='px-4 py-5 sm:px-6'>
                   <h3 className='text-lg leading-6 font-medium text-gray-900'>
-                    Daily Breakdown - Multiple API Calls
+                    Daily Breakdown - Single API Call
                   </h3>
                   <p className='mt-1 max-w-2xl text-sm text-gray-500'>
-                    Campaign analytics data for ID: {campaignId} with individual
-                    daily API calls (timeGranularity=DAILY with pivot, one call
-                    per day)
+                    Analytics data for {analyticsLabel} from a single LinkedIn API
+                    call using timeGranularity=DAILY with geographic pivoting.
                   </p>
                   <div className='mt-2 text-sm text-blue-600'>
-                    Strategy: Multiple API calls (one per day) | Total days:{' '}
-                    {dailyData.dailyData.length} | Total aggregated regions:{' '}
-                    {dailyData.aggregated.length}
+                    Strategy: Single API call | {dailyData.elements.length}{' '}
+                    elements
                   </div>
                 </div>
 
@@ -1063,178 +2162,183 @@ export default function Home() {
                   <table className='min-w-full divide-y divide-gray-200'>
                     <thead className='bg-gray-50'>
                       <tr>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Date
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Geographic Region
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Impressions
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Clicks
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Cost
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Company Page Clicks
-                        </th>
-                        <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'>
-                          Engagement
-                        </th>
+                        <SortableHeader
+                          label='Start Date'
+                          column='startDate'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='End Date'
+                          column='endDate'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Geographic Region'
+                          column='geography'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Impressions'
+                          column='impressions'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Clicks'
+                          column='clicks'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (Local)'
+                          column='costLocal'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Cost (USD)'
+                          column='costUsd'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Likes'
+                          column='likes'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Comments'
+                          column='comments'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
+                        <SortableHeader
+                          label='Shares'
+                          column='shares'
+                          sortConfig={dailySort}
+                          onSort={(column) =>
+                            handleSort(dailySort, column, setDailySort, () =>
+                              setDailyPage(0)
+                            )
+                          }
+                        />
                       </tr>
                     </thead>
                     <tbody className='bg-white divide-y divide-gray-200'>
-                      {dailyData.dailyData
-                        .filter((day) => day.elements.length > 0) // Only show days with data
-                        .map((day, dayIndex) => {
-                          // Show ALL elements, including those with zero values
-                          return day.elements.map((element, elementIndex) => (
-                            <tr
-                              key={`${dayIndex}-${elementIndex}`}
-                              className='hover:bg-gray-50'
-                            >
-                              <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                                {elementIndex === 0 ? day.date : ''}
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
-                                <div className='space-y-1'>
-                                  {element.pivotValues.map((pv, pvIndex) => {
-                                    const match = pv.match(/urn:li:geo:(\d+)/)
-                                    const geoId = match ? match[1] : ''
-                                    const geoName = formatPivotValue(pv)
-                                    const isLoading =
-                                      geoId && geoLoading.has(geoId)
-                                    const isGeoId = geoName.startsWith('Geo: ')
+                      {paginatedDailyElements.map((element, index) => (
+                        <tr
+                          key={`${formatDatePart(element.dateRange.start)}-${element.pivotValues.join('-') || 'all'}-${index}`}
+                          className='hover:bg-gray-50'
+                        >
+                          <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
+                            {formatDatePart(element.dateRange.start)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.dateRange.end ? formatDatePart(element.dateRange.end) : '—'}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900'>
+                            {renderPivotValues(element.pivotValues)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.impressions.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.clicks.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {formatCurrency(element.costInLocalCurrency)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {formatCurrency(element.costInUsd)}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.likes.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.comments.toLocaleString()}
+                          </td>
+                          <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
+                            {element.shares.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
 
-                                    return (
-                                      <div
-                                        key={pvIndex}
-                                        className='flex items-center space-x-2'
-                                      >
-                                        {isLoading && (
-                                          <div className='animate-spin h-3 w-3 border border-gray-300 border-t-blue-500 rounded-full'></div>
-                                        )}
-                                        <span
-                                          className={
-                                            isLoading || isGeoId
-                                              ? 'text-gray-400'
-                                              : 'text-gray-900 font-medium'
-                                          }
-                                        >
-                                          {geoName}
-                                        </span>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                {element.impressions.toLocaleString()}
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                {element.clicks}
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                {formatCurrency(element.costInLocalCurrency)}
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                {element.companyPageClicks}
-                              </td>
-                              <td className='px-6 py-4 whitespace-nowrap text-sm text-gray-500'>
-                                <div className='text-xs space-y-1'>
-                                  <div>👍 {element.likes} likes</div>
-                                  <div>💬 {element.comments} comments</div>
-                                  <div>🔄 {element.shares} shares</div>
-                                  <div>➕ {element.follows} follows</div>
-                                </div>
-                              </td>
-                            </tr>
-                          ))
-                        })
-                        .flat()
-                        .filter(Boolean)}
-
-                      {/* Totals Row */}
                       <tr className='bg-blue-50 font-semibold border-t-2 border-blue-200'>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
                           TOTALS
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
                           All Regions Combined
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {dailyData.aggregated
-                            .reduce((sum, el) => sum + el.impressions, 0)
-                            .toLocaleString()}
+                          {dailyTotals.impressions.toLocaleString()}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {dailyData.aggregated.reduce(
-                            (sum, el) => sum + el.clicks,
-                            0
-                          )}
+                          {dailyTotals.clicks.toLocaleString()}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {formatCurrency(
-                            dailyData.aggregated
-                              .reduce(
-                                (sum, el) =>
-                                  sum + parseFloat(el.costInLocalCurrency),
-                                0
-                              )
-                              .toString()
-                          )}
+                          {formatCurrency(dailyTotals.costInLocalCurrency)}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          {dailyData.aggregated.reduce(
-                            (sum, el) => sum + el.companyPageClicks,
-                            0
-                          )}
+                          {formatCurrency(dailyTotals.costInUsd)}
                         </td>
                         <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
-                          <div className='text-xs space-y-1'>
-                            <div>
-                              👍{' '}
-                              {dailyData.aggregated.reduce(
-                                (sum, el) => sum + el.likes,
-                                0
-                              )}{' '}
-                              likes
-                            </div>
-                            <div>
-                              💬{' '}
-                              {dailyData.aggregated.reduce(
-                                (sum, el) => sum + el.comments,
-                                0
-                              )}{' '}
-                              comments
-                            </div>
-                            <div>
-                              🔄{' '}
-                              {dailyData.aggregated.reduce(
-                                (sum, el) => sum + el.shares,
-                                0
-                              )}{' '}
-                              shares
-                            </div>
-                            <div>
-                              ➕{' '}
-                              {dailyData.aggregated.reduce(
-                                (sum, el) => sum + el.follows,
-                                0
-                              )}{' '}
-                              follows
-                            </div>
-                          </div>
+                          {dailyTotals.likes.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {dailyTotals.comments.toLocaleString()}
+                        </td>
+                        <td className='px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-900'>
+                          {dailyTotals.shares.toLocaleString()}
                         </td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
 
-                {dailyData.dailyData.length === 0 && (
+                {dailyData.elements.length === 0 && (
                   <div className='text-center py-8'>
                     <p className='text-gray-500'>
                       No daily analytics data found for the specified date
@@ -1243,12 +2347,162 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* Note about data display */}
+                {dailyTotalRows > 0 && (
+                  <div className='flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200'>
+                    <div className='text-sm text-gray-700'>
+                      Showing {dailyStartRow + 1} to{' '}
+                      {Math.min(dailyEndRow, dailyTotalRows)} of {dailyTotalRows}{' '}
+                      rows
+                    </div>
+                    <div className='flex gap-2'>
+                      <button
+                        onClick={() => setDailyPage((page) => page - 1)}
+                        disabled={dailyPage === 0}
+                        className='px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed'
+                      >
+                        Previous
+                      </button>
+                      <span className='px-3 py-1 text-sm text-gray-600'>
+                        Page {dailyPage + 1} of {dailyTotalPages}
+                      </span>
+                      <button
+                        onClick={() => setDailyPage((page) => page + 1)}
+                        disabled={dailyPage >= dailyTotalPages - 1}
+                        className='px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed'
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className='px-4 py-3 bg-gray-50 border-t border-gray-200'>
                   <p className='text-xs text-gray-600'>
-                    <strong>Note:</strong> All data points are displayed in this
-                    table, excluding rows with all zero values.
+                    <strong>Note:</strong> All daily data points are displayed in
+                    this table for transparency, excluding dates with no
+                    returned elements.
                   </p>
+                </div>
+
+                <div className='border-t border-gray-200'>
+                  <button
+                    onClick={() =>
+                      setDebugOpen((prev) => ({
+                        ...prev,
+                        daily: !prev.daily,
+                      }))
+                    }
+                    className='w-full px-4 py-2 flex items-center justify-between text-sm text-gray-600 hover:bg-gray-50'
+                  >
+                    <span className='font-medium'>🔧 Debug Session</span>
+                    <svg
+                      className={`h-4 w-4 transform transition-transform ${debugOpen.daily ? 'rotate-180' : ''}`}
+                      fill='none'
+                      viewBox='0 0 24 24'
+                      stroke='currentColor'
+                    >
+                      <path
+                        strokeLinecap='round'
+                        strokeLinejoin='round'
+                        strokeWidth={2}
+                        d='M19 9l-7 7-7-7'
+                      />
+                    </svg>
+                  </button>
+                  {debugOpen.daily && (
+                    <div className='px-4 pb-4 relative'>
+                      <button
+                        onClick={() => handleCopyCurl('daily')}
+                        className='absolute top-2 right-6 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                        title='Copy curl command'
+                      >
+                        <svg
+                          className='h-4 w-4'
+                          fill='none'
+                          viewBox='0 0 24 24'
+                          stroke='currentColor'
+                        >
+                          <path
+                            strokeLinecap='round'
+                            strokeLinejoin='round'
+                            strokeWidth={2}
+                            d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                          />
+                        </svg>
+                      </button>
+                      {copiedStrategy === 'daily' && (
+                        <div className='absolute top-3 right-16 text-xs font-medium text-green-600'>
+                          Copied!
+                        </div>
+                      )}
+                      <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap'>
+                        {buildCurlCommand('daily')}
+                      </pre>
+
+                      <div className='mt-3'>
+                        <button
+                          onClick={() =>
+                            setDebugOpen((prev) => ({
+                              ...prev,
+                              dailyResponse: !prev.dailyResponse,
+                            }))
+                          }
+                          className='flex items-center text-xs text-gray-500 hover:text-gray-700 mb-1'
+                        >
+                          <span>📋 API Response</span>
+                          <svg
+                            className={`ml-1 h-3 w-3 transform transition-transform ${debugOpen.dailyResponse ? 'rotate-180' : ''}`}
+                            fill='none'
+                            viewBox='0 0 24 24'
+                            stroke='currentColor'
+                          >
+                            <path
+                              strokeLinecap='round'
+                              strokeLinejoin='round'
+                              strokeWidth={2}
+                              d='M19 9l-7 7-7-7'
+                            />
+                          </svg>
+                        </button>
+                        {debugOpen.dailyResponse && (
+                          <div className='relative'>
+                            <button
+                              onClick={() =>
+                                handleCopyContent(
+                                  dailyRawResponse,
+                                  'dailyResponse'
+                                )
+                              }
+                              className='absolute top-2 right-2 p-1.5 text-gray-400 hover:text-gray-600 rounded'
+                              title='Copy API response'
+                            >
+                              <svg
+                                className='h-4 w-4'
+                                fill='none'
+                                viewBox='0 0 24 24'
+                                stroke='currentColor'
+                              >
+                                <path
+                                  strokeLinecap='round'
+                                  strokeLinejoin='round'
+                                  strokeWidth={2}
+                                  d='M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16v2a2 2 0 002 2h8a2 2 0 002-2v-8a2 2 0 00-2-2h-2M8 16h8a2 2 0 002-2v-2'
+                                />
+                              </svg>
+                            </button>
+                            {copiedStrategy === 'dailyResponse' && (
+                              <div className='absolute top-3 right-12 text-xs font-medium text-green-600'>
+                                Copied!
+                              </div>
+                            )}
+                            <pre className='bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap max-h-96 overflow-y-auto'>
+                              {dailyRawResponse || 'No response data available'}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1270,7 +2524,6 @@ export default function Home() {
                     className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
                     style={{ gridTemplateRows: '1fr', minHeight: '400px' }}
                   >
-                    {/* Overall Summary */}
                     <div
                       className='bg-white p-4 rounded-lg shadow border-l-4 border-blue-500 flex flex-col'
                       style={{ minHeight: '400px' }}
@@ -1287,67 +2540,11 @@ export default function Home() {
                         <strong>Recommended for:</strong> Data validation and
                         Campaign Manager report verification. This approach
                         provides the most accurate totals that align with
-                        LinkedIn&apos;s Campaign Manager interface, making it
-                        the gold standard for data reconciliation.
+                        LinkedIn&apos;s Campaign Manager interface, making it the
+                        gold standard for data reconciliation.
                       </p>
-                      <div className='space-y-2 text-sm mt-auto'>
-                        <div className='flex justify-between'>
-                          <span>Total Impressions:</span>
-                          <span className='font-medium'>
-                            {overallData.elements
-                              .reduce((sum, el) => sum + el.impressions, 0)
-                              .toLocaleString()}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Clicks:</span>
-                          <span className='font-medium'>
-                            {overallData.elements.reduce(
-                              (sum, el) => sum + el.clicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Cost:</span>
-                          <span className='font-medium'>
-                            {formatCurrency(
-                              overallData.elements
-                                .reduce(
-                                  (sum, el) =>
-                                    sum + parseFloat(el.costInLocalCurrency),
-                                  0
-                                )
-                                .toString()
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Company Page Clicks:</span>
-                          <span className='font-medium'>
-                            {overallData.elements.reduce(
-                              (sum, el) => sum + el.companyPageClicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Engagement:</span>
-                          <span className='font-medium'>
-                            {overallData.elements.reduce(
-                              (sum, el) =>
-                                sum +
-                                el.likes +
-                                el.comments +
-                                el.shares +
-                                el.follows,
-                              0
-                            )}
-                          </span>
-                        </div>
-                      </div>
+                      {metricSummary(overallTotals)}
 
-                      {/* Download Button */}
                       <div className='mt-4 pt-3 border-t border-gray-200'>
                         <button
                           onClick={handleDownloadOverall}
@@ -1358,7 +2555,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Geographic Breakdown */}
                     <div
                       className='bg-white p-4 rounded-lg shadow border-l-4 border-green-500 flex flex-col'
                       style={{ minHeight: '400px' }}
@@ -1379,64 +2575,8 @@ export default function Home() {
                         granular breakdowns while maintaining LinkedIn&apos;s
                         professional demographic compliance standards.
                       </p>
-                      <div className='space-y-2 text-sm mt-auto'>
-                        <div className='flex justify-between'>
-                          <span>Total Impressions:</span>
-                          <span className='font-medium'>
-                            {data.elements
-                              .reduce((sum, el) => sum + el.impressions, 0)
-                              .toLocaleString()}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Clicks:</span>
-                          <span className='font-medium'>
-                            {data.elements.reduce(
-                              (sum, el) => sum + el.clicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Cost:</span>
-                          <span className='font-medium'>
-                            {formatCurrency(
-                              data.elements
-                                .reduce(
-                                  (sum, el) =>
-                                    sum + parseFloat(el.costInLocalCurrency),
-                                  0
-                                )
-                                .toString()
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Company Page Clicks:</span>
-                          <span className='font-medium'>
-                            {data.elements.reduce(
-                              (sum, el) => sum + el.companyPageClicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Engagement:</span>
-                          <span className='font-medium'>
-                            {data.elements.reduce(
-                              (sum, el) =>
-                                sum +
-                                el.likes +
-                                el.comments +
-                                el.shares +
-                                el.follows,
-                              0
-                            )}
-                          </span>
-                        </div>
-                      </div>
+                      {metricSummary(geographicTotals)}
 
-                      {/* Download Button */}
                       <div className='mt-4 pt-3 border-t border-gray-200'>
                         <button
                           onClick={handleDownloadGeographic}
@@ -1447,7 +2587,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Monthly Breakdown */}
                     <div
                       className='bg-white p-4 rounded-lg shadow border-l-4 border-purple-500 flex flex-col'
                       style={{ minHeight: '400px' }}
@@ -1467,143 +2606,19 @@ export default function Home() {
                       <p className='text-xs text-gray-600 mb-3 leading-relaxed'>
                         <strong>Caution:</strong> While providing temporal
                         granularity, this approach exhibits{' '}
-                        {(() => {
-                          const geoTotal = data.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const monthlyTotal = monthlyData.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const reductionPercent =
-                            geoTotal > 0
-                              ? Math.round(
-                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
-                                )
-                              : 0
-
-                          let severityText = 'minimal data loss'
-                          if (reductionPercent >= 50) {
-                            severityText = 'severe data loss'
-                          } else if (reductionPercent >= 20) {
-                            severityText = 'significant data loss'
-                          } else if (reductionPercent >= 5) {
-                            severityText = 'moderate data loss'
-                          }
-
-                          return severityText
-                        })()}{' '}
-                        due to LinkedIn&apos;s demographic filtering applied at
-                        the monthly level. Cost metrics show{' '}
-                        {(() => {
-                          const geoTotal = data.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const monthlyTotal = monthlyData.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const reductionPercent =
-                            geoTotal > 0
-                              ? Math.round(
-                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
-                                )
-                              : 0
-                          return `~${reductionPercent}%`
-                        })()}{' '}
+                        {getReductionSeverity(monthlyReductionPercent)} due to
+                        LinkedIn&apos;s demographic filtering applied at the monthly
+                        level. Cost metrics show ~{monthlyReductionPercent}%
                         reduction compared to Geographic Breakdown
-                        {(() => {
-                          const geoTotal = data.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const monthlyTotal = monthlyData.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const reductionPercent =
-                            geoTotal > 0
-                              ? Math.round(
-                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
-                                )
-                              : 0
-
-                          if (reductionPercent >= 20) {
-                            return ', indicating substantial underreporting that may impact budget reconciliation and financial accuracy'
-                          } else if (reductionPercent >= 5) {
-                            return ', which may affect budget reconciliation accuracy'
-                          } else {
-                            return ', representing acceptable variance for most use cases'
-                          }
-                        })()}
+                        {monthlyReductionPercent >= 20
+                          ? ', indicating substantial underreporting that may impact budget reconciliation and financial accuracy'
+                          : monthlyReductionPercent >= 5
+                            ? ', which may affect budget reconciliation accuracy'
+                            : ', representing acceptable variance for most use cases'}
                         .
                       </p>
-                      <div className='space-y-2 text-sm mt-auto'>
-                        <div className='flex justify-between'>
-                          <span>Total Impressions:</span>
-                          <span className='font-medium'>
-                            {monthlyData.elements
-                              .reduce((sum, el) => sum + el.impressions, 0)
-                              .toLocaleString()}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Clicks:</span>
-                          <span className='font-medium'>
-                            {monthlyData.elements.reduce(
-                              (sum, el) => sum + el.clicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Cost:</span>
-                          <span className='font-medium'>
-                            {formatCurrency(
-                              monthlyData.elements
-                                .reduce(
-                                  (sum, el) =>
-                                    sum + parseFloat(el.costInLocalCurrency),
-                                  0
-                                )
-                                .toString()
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Company Page Clicks:</span>
-                          <span className='font-medium'>
-                            {monthlyData.elements.reduce(
-                              (sum, el) => sum + el.companyPageClicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Engagement:</span>
-                          <span className='font-medium'>
-                            {monthlyData.elements.reduce(
-                              (sum, el) =>
-                                sum +
-                                el.likes +
-                                el.comments +
-                                el.shares +
-                                el.follows,
-                              0
-                            )}
-                          </span>
-                        </div>
-                      </div>
+                      {metricSummary(monthlyTotals)}
 
-                      {/* Download Button */}
                       <div className='mt-4 pt-3 border-t border-gray-200'>
                         <button
                           onClick={handleDownloadMonthly}
@@ -1614,14 +2629,13 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Daily Totals */}
                     <div
                       className='bg-white p-4 rounded-lg shadow border-l-4 border-red-500 flex flex-col'
                       style={{ minHeight: '400px' }}
                     >
                       <div className='mb-3'>
                         <h4 className='font-semibold text-gray-900 text-sm leading-tight mb-2'>
-                          Daily API Calls Sum
+                          Daily Breakdown
                           <br />
                           <span className='text-xs text-gray-600'>
                             (timeGranularity=DAILY, with pivot)
@@ -1632,71 +2646,14 @@ export default function Home() {
                         </span>
                       </div>
                       <p className='text-xs text-gray-600 mb-3 leading-relaxed'>
-                        <strong>Caution:</strong> This approach may result in
-                        significant data loss and reporting inaccuracies due to
-                        LinkedIn&apos;s professional demographic filtering
-                        applied at the daily level. The aggregation of filtered
-                        daily data compounds data loss, making totals unreliable
-                        for business decisions.
+                        <strong>Use case:</strong> This single-call daily strategy
+                        provides daily time-series breakdowns without duplicate
+                        client-side aggregation logic, while still reflecting
+                        LinkedIn&apos;s normal demographic filtering behavior for
+                        pivoted results.
                       </p>
-                      <div className='space-y-2 text-sm mt-auto'>
-                        <div className='flex justify-between'>
-                          <span>Total Impressions:</span>
-                          <span className='font-medium'>
-                            {dailyData.aggregated
-                              .reduce((sum, el) => sum + el.impressions, 0)
-                              .toLocaleString()}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Clicks:</span>
-                          <span className='font-medium'>
-                            {dailyData.aggregated.reduce(
-                              (sum, el) => sum + el.clicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Cost:</span>
-                          <span className='font-medium'>
-                            {formatCurrency(
-                              dailyData.aggregated
-                                .reduce(
-                                  (sum, el) =>
-                                    sum + parseFloat(el.costInLocalCurrency),
-                                  0
-                                )
-                                .toString()
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Company Page Clicks:</span>
-                          <span className='font-medium'>
-                            {dailyData.aggregated.reduce(
-                              (sum, el) => sum + el.companyPageClicks,
-                              0
-                            )}
-                          </span>
-                        </div>
-                        <div className='flex justify-between'>
-                          <span>Total Engagement:</span>
-                          <span className='font-medium'>
-                            {dailyData.aggregated.reduce(
-                              (sum, el) =>
-                                sum +
-                                el.likes +
-                                el.comments +
-                                el.shares +
-                                el.follows,
-                              0
-                            )}
-                          </span>
-                        </div>
-                      </div>
+                      {metricSummary(dailyTotals)}
 
-                      {/* Download Button */}
                       <div className='mt-4 pt-3 border-t border-gray-200'>
                         <button
                           onClick={handleDownloadDaily}
@@ -1708,442 +2665,71 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* Difference Analysis */}
                   <div className='mt-6 bg-gradient-to-r from-yellow-50 to-orange-50 p-4 rounded-lg border border-yellow-200'>
                     <h4 className='font-semibold text-yellow-800 mb-2'>
                       🔍 Professional API Strategy Analysis
                     </h4>
                     <div className='text-sm text-yellow-700'>
-                      {(() => {
-                        // Calculate totals for each metric from all four strategies
-                        const overallImpressions = overallData.elements.reduce(
-                          (sum, el) => sum + el.impressions,
-                          0
-                        )
-                        const overallClicks = overallData.elements.reduce(
-                          (sum, el) => sum + el.clicks,
-                          0
-                        )
-                        const overallCost = overallData.elements.reduce(
-                          (sum, el) => sum + parseFloat(el.costInLocalCurrency),
-                          0
-                        )
-                        const overallCompanyPageClicks =
-                          overallData.elements.reduce(
-                            (sum, el) => sum + el.companyPageClicks,
-                            0
-                          )
-                        const overallEngagement = overallData.elements.reduce(
-                          (sum, el) =>
-                            sum +
-                            el.likes +
-                            el.comments +
-                            el.shares +
-                            el.follows,
-                          0
-                        )
-
-                        const aggregateImpressions = data.elements.reduce(
-                          (sum, el) => sum + el.impressions,
-                          0
-                        )
-                        const aggregateClicks = data.elements.reduce(
-                          (sum, el) => sum + el.clicks,
-                          0
-                        )
-                        const aggregateCost = data.elements.reduce(
-                          (sum, el) => sum + parseFloat(el.costInLocalCurrency),
-                          0
-                        )
-                        const aggregateCompanyPageClicks = data.elements.reduce(
-                          (sum, el) => sum + el.companyPageClicks,
-                          0
-                        )
-                        const aggregateEngagement = data.elements.reduce(
-                          (sum, el) =>
-                            sum +
-                            el.likes +
-                            el.comments +
-                            el.shares +
-                            el.follows,
-                          0
-                        )
-
-                        const monthlyImpressions = monthlyData.elements.reduce(
-                          (sum, el) => sum + el.impressions,
-                          0
-                        )
-                        const monthlyClicks = monthlyData.elements.reduce(
-                          (sum, el) => sum + el.clicks,
-                          0
-                        )
-                        const monthlyCost = monthlyData.elements.reduce(
-                          (sum, el) => sum + parseFloat(el.costInLocalCurrency),
-                          0
-                        )
-                        const monthlyCompanyPageClicks =
-                          monthlyData.elements.reduce(
-                            (sum, el) => sum + el.companyPageClicks,
-                            0
-                          )
-                        const monthlyEngagement = monthlyData.elements.reduce(
-                          (sum, el) =>
-                            sum +
-                            el.likes +
-                            el.comments +
-                            el.shares +
-                            el.follows,
-                          0
-                        )
-
-                        const dailyImpressions = dailyData.aggregated.reduce(
-                          (sum, el) => sum + el.impressions,
-                          0
-                        )
-                        const dailyClicks = dailyData.aggregated.reduce(
-                          (sum, el) => sum + el.clicks,
-                          0
-                        )
-                        const dailyCost = dailyData.aggregated.reduce(
-                          (sum, el) => sum + parseFloat(el.costInLocalCurrency),
-                          0
-                        )
-                        const dailyCompanyPageClicks =
-                          dailyData.aggregated.reduce(
-                            (sum, el) => sum + el.companyPageClicks,
-                            0
-                          )
-                        const dailyEngagement = dailyData.aggregated.reduce(
-                          (sum, el) =>
-                            sum +
-                            el.likes +
-                            el.comments +
-                            el.shares +
-                            el.follows,
-                          0
-                        )
-
-                        // Calculate differences for all metrics between all four strategies
-                        const impressionDiffs = {
-                          overallVsAggregate: Math.abs(
-                            overallImpressions - aggregateImpressions
-                          ),
-                          overallVsMonthly: Math.abs(
-                            overallImpressions - monthlyImpressions
-                          ),
-                          overallVsDaily: Math.abs(
-                            overallImpressions - dailyImpressions
-                          ),
-                          aggregateVsMonthly: Math.abs(
-                            aggregateImpressions - monthlyImpressions
-                          ),
-                          aggregateVsDaily: Math.abs(
-                            aggregateImpressions - dailyImpressions
-                          ),
-                          monthlyVsDaily: Math.abs(
-                            monthlyImpressions - dailyImpressions
-                          ),
-                        }
-
-                        const clickDiffs = {
-                          overallVsAggregate: Math.abs(
-                            overallClicks - aggregateClicks
-                          ),
-                          overallVsMonthly: Math.abs(
-                            overallClicks - monthlyClicks
-                          ),
-                          overallVsDaily: Math.abs(overallClicks - dailyClicks),
-                          aggregateVsMonthly: Math.abs(
-                            aggregateClicks - monthlyClicks
-                          ),
-                          aggregateVsDaily: Math.abs(
-                            aggregateClicks - dailyClicks
-                          ),
-                          monthlyVsDaily: Math.abs(monthlyClicks - dailyClicks),
-                        }
-
-                        const costDiffs = {
-                          overallVsAggregate: Math.abs(
-                            overallCost - aggregateCost
-                          ),
-                          overallVsMonthly: Math.abs(overallCost - monthlyCost),
-                          overallVsDaily: Math.abs(overallCost - dailyCost),
-                          aggregateVsMonthly: Math.abs(
-                            aggregateCost - monthlyCost
-                          ),
-                          aggregateVsDaily: Math.abs(aggregateCost - dailyCost),
-                          monthlyVsDaily: Math.abs(monthlyCost - dailyCost),
-                        }
-
-                        const companyPageClickDiffs = {
-                          overallVsAggregate: Math.abs(
-                            overallCompanyPageClicks -
-                              aggregateCompanyPageClicks
-                          ),
-                          overallVsMonthly: Math.abs(
-                            overallCompanyPageClicks - monthlyCompanyPageClicks
-                          ),
-                          overallVsDaily: Math.abs(
-                            overallCompanyPageClicks - dailyCompanyPageClicks
-                          ),
-                          aggregateVsMonthly: Math.abs(
-                            aggregateCompanyPageClicks -
-                              monthlyCompanyPageClicks
-                          ),
-                          aggregateVsDaily: Math.abs(
-                            aggregateCompanyPageClicks - dailyCompanyPageClicks
-                          ),
-                          monthlyVsDaily: Math.abs(
-                            monthlyCompanyPageClicks - dailyCompanyPageClicks
-                          ),
-                        }
-
-                        const engagementDiffs = {
-                          overallVsAggregate: Math.abs(
-                            overallEngagement - aggregateEngagement
-                          ),
-                          overallVsMonthly: Math.abs(
-                            overallEngagement - monthlyEngagement
-                          ),
-                          overallVsDaily: Math.abs(
-                            overallEngagement - dailyEngagement
-                          ),
-                          aggregateVsMonthly: Math.abs(
-                            aggregateEngagement - monthlyEngagement
-                          ),
-                          aggregateVsDaily: Math.abs(
-                            aggregateEngagement - dailyEngagement
-                          ),
-                          monthlyVsDaily: Math.abs(
-                            monthlyEngagement - dailyEngagement
-                          ),
-                        }
-
-                        // Check if all metrics match perfectly
-                        const allMatch =
-                          Object.values(impressionDiffs).every(
-                            (diff) => diff === 0
-                          ) &&
-                          Object.values(clickDiffs).every(
-                            (diff) => diff === 0
-                          ) &&
-                          Object.values(costDiffs).every(
-                            (diff) => diff === 0
-                          ) &&
-                          Object.values(companyPageClickDiffs).every(
-                            (diff) => diff === 0
-                          ) &&
-                          Object.values(engagementDiffs).every(
-                            (diff) => diff === 0
-                          )
-
-                        return allMatch ? (
-                          <p>
-                            ✅ Perfect match! All four API strategies return
-                            identical totals across all metrics.
+                      {allStrategiesMatch ? (
+                        <p>
+                          ✅ Perfect match! All four API strategies return
+                          identical totals across the current metric set.
+                        </p>
+                      ) : (
+                        <div className='space-y-3'>
+                          <p className='font-medium'>
+                            Metric differences between API strategies:
                           </p>
-                        ) : (
-                          <div className='space-y-3'>
-                            <p className='font-medium'>
-                              Metric differences between API strategies:
-                            </p>
 
-                            <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
-                              <div>
+                          <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            {differenceSections.map((section) => (
+                              <div key={section.title}>
                                 <p className='font-semibold text-yellow-800 mb-1'>
-                                  Impressions:
+                                  {section.title}:
                                 </p>
                                 <ul className='ml-4 space-y-1 text-xs'>
-                                  <li>
-                                    • Overall vs Geographic:{' '}
-                                    {impressionDiffs.overallVsAggregate.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Monthly:{' '}
-                                    {impressionDiffs.overallVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Daily:{' '}
-                                    {impressionDiffs.overallVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Monthly:{' '}
-                                    {impressionDiffs.aggregateVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Daily:{' '}
-                                    {impressionDiffs.aggregateVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Monthly vs Daily:{' '}
-                                    {impressionDiffs.monthlyVsDaily.toLocaleString()}
-                                  </li>
+                                  {DIFFERENCE_LABELS.map(([key, label]) => (
+                                    <li key={key}>
+                                      • {label}:{' '}
+                                      {section.formatter(section.values[key])}
+                                    </li>
+                                  ))}
                                 </ul>
                               </div>
-
-                              <div>
-                                <p className='font-semibold text-yellow-800 mb-1'>
-                                  Clicks:
-                                </p>
-                                <ul className='ml-4 space-y-1 text-xs'>
-                                  <li>
-                                    • Overall vs Geographic:{' '}
-                                    {clickDiffs.overallVsAggregate.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Monthly:{' '}
-                                    {clickDiffs.overallVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Daily:{' '}
-                                    {clickDiffs.overallVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Monthly:{' '}
-                                    {clickDiffs.aggregateVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Daily:{' '}
-                                    {clickDiffs.aggregateVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Monthly vs Daily:{' '}
-                                    {clickDiffs.monthlyVsDaily.toLocaleString()}
-                                  </li>
-                                </ul>
-                              </div>
-
-                              <div>
-                                <p className='font-semibold text-yellow-800 mb-1'>
-                                  Cost:
-                                </p>
-                                <ul className='ml-4 space-y-1 text-xs'>
-                                  <li>
-                                    • Overall vs Geographic: $
-                                    {costDiffs.overallVsAggregate.toFixed(2)}
-                                  </li>
-                                  <li>
-                                    • Overall vs Monthly: $
-                                    {costDiffs.overallVsMonthly.toFixed(2)}
-                                  </li>
-                                  <li>
-                                    • Overall vs Daily: $
-                                    {costDiffs.overallVsDaily.toFixed(2)}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Monthly: $
-                                    {costDiffs.aggregateVsMonthly.toFixed(2)}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Daily: $
-                                    {costDiffs.aggregateVsDaily.toFixed(2)}
-                                  </li>
-                                  <li>
-                                    • Monthly vs Daily: $
-                                    {costDiffs.monthlyVsDaily.toFixed(2)}
-                                  </li>
-                                </ul>
-                              </div>
-
-                              <div>
-                                <p className='font-semibold text-yellow-800 mb-1'>
-                                  Company Page Clicks:
-                                </p>
-                                <ul className='ml-4 space-y-1 text-xs'>
-                                  <li>
-                                    • Overall vs Geographic:{' '}
-                                    {companyPageClickDiffs.overallVsAggregate.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Monthly:{' '}
-                                    {companyPageClickDiffs.overallVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Daily:{' '}
-                                    {companyPageClickDiffs.overallVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Monthly:{' '}
-                                    {companyPageClickDiffs.aggregateVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Daily:{' '}
-                                    {companyPageClickDiffs.aggregateVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Monthly vs Daily:{' '}
-                                    {companyPageClickDiffs.monthlyVsDaily.toLocaleString()}
-                                  </li>
-                                </ul>
-                              </div>
-
-                              <div className='md:col-span-2'>
-                                <p className='font-semibold text-yellow-800 mb-1'>
-                                  Total Engagement:
-                                </p>
-                                <ul className='ml-4 space-y-1 text-xs'>
-                                  <li>
-                                    • Overall vs Geographic:{' '}
-                                    {engagementDiffs.overallVsAggregate.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Monthly:{' '}
-                                    {engagementDiffs.overallVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Overall vs Daily:{' '}
-                                    {engagementDiffs.overallVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Monthly:{' '}
-                                    {engagementDiffs.aggregateVsMonthly.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Geographic vs Daily:{' '}
-                                    {engagementDiffs.aggregateVsDaily.toLocaleString()}
-                                  </li>
-                                  <li>
-                                    • Monthly vs Daily:{' '}
-                                    {engagementDiffs.monthlyVsDaily.toLocaleString()}
-                                  </li>
-                                </ul>
-                              </div>
-                            </div>
-
-                            <p className='mt-3 text-xs'>
-                              ⚠️ These differences are primarily due to
-                              LinkedIn&apos;s Professional Demographic
-                              restrictions:
-                              <br />
-                              • Professional Demographic values will not be
-                              returned for ads receiving engagement from too few
-                              members
-                              <br />
-                              • Professional Demographic pivots have a minimum
-                              threshold of 3 events - values with less than 3
-                              events are dropped from query results
-                              <br />
-                              • Geographic data uses professional demographics,
-                              which may cause discrepancies when compared to
-                              overall metrics
-                              <br />
-                              <a
-                                href='https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ads-reporting?view=li-lms-2025-06&tabs=http#restrictions'
-                                target='_blank'
-                                rel='noopener noreferrer'
-                                className='text-blue-600 underline hover:text-blue-800'
-                              >
-                                Learn more about LinkedIn&apos;s reporting
-                                restrictions
-                              </a>
-                            </p>
+                            ))}
                           </div>
-                        )
-                      })()}
+
+                          <p className='mt-3 text-xs'>
+                            ⚠️ These differences are primarily due to
+                            LinkedIn&apos;s Professional Demographic restrictions:
+                            <br />
+                            • Professional Demographic values will not be
+                            returned for ads receiving engagement from too few
+                            members
+                            <br />
+                            • Professional Demographic pivots have a minimum
+                            threshold of 3 events - values with less than 3
+                            events are dropped from query results
+                            <br />
+                            • Geographic data uses professional demographics,
+                            which may cause discrepancies when compared to
+                            overall metrics
+                            <br />
+                            <a
+                              href='https://learn.microsoft.com/en-us/linkedin/marketing/integrations/ads-reporting/ads-reporting?view=li-lms-2025-06&tabs=http#restrictions'
+                              target='_blank'
+                              rel='noopener noreferrer'
+                              className='text-blue-600 underline hover:text-blue-800'
+                            >
+                              Learn more about LinkedIn&apos;s reporting
+                              restrictions
+                            </a>
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Professional Recommendations */}
                   <div className='mt-6 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-200'>
                     <h4 className='font-semibold text-blue-800 mb-3'>
                       🎯 Professional Implementation Recommendations
@@ -2154,10 +2740,10 @@ export default function Home() {
                           📊 Benchmark Strategy
                         </h5>
                         <p className='text-blue-700 text-xs leading-relaxed'>
-                          <strong>Overall Summary</strong> should be your
-                          primary reference for data validation. Use this
-                          approach to verify Campaign Manager report alignment
-                          and establish baseline metrics for business reporting.
+                          <strong>Overall Summary</strong> should be your primary
+                          reference for data validation. Use this approach to
+                          verify Campaign Manager report alignment and establish
+                          baseline metrics for business reporting.
                         </p>
                       </div>
                       <div className='bg-white p-3 rounded-lg border-l-4 border-green-500'>
@@ -2178,82 +2764,10 @@ export default function Home() {
                         </h5>
                         <p className='text-orange-700 text-xs leading-relaxed'>
                           <strong>Monthly Breakdown</strong> shows{' '}
-                          {(() => {
-                            const geoTotal = data.elements.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const monthlyTotal = monthlyData.elements.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const reductionPercent =
-                              geoTotal > 0
-                                ? Math.round(
-                                    ((geoTotal - monthlyTotal) / geoTotal) * 100
-                                  )
-                                : 0
-
-                            let severityText = 'minimal data variance'
-                            if (reductionPercent >= 50) {
-                              severityText = 'severe data loss'
-                            } else if (reductionPercent >= 20) {
-                              severityText = 'significant data loss'
-                            } else if (reductionPercent >= 5) {
-                              severityText = 'moderate data loss'
-                            }
-
-                            return severityText
-                          })()}{' '}
-                          with{' '}
-                          {(() => {
-                            const geoTotal = data.elements.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const monthlyTotal = monthlyData.elements.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const reductionPercent =
-                              geoTotal > 0
-                                ? Math.round(
-                                    ((geoTotal - monthlyTotal) / geoTotal) * 100
-                                  )
-                                : 0
-                            return `~${reductionPercent}%`
-                          })()}{' '}
-                          cost{' '}
-                          {(() => {
-                            const geoTotal = data.elements.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const monthlyTotal = monthlyData.elements.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const reductionPercent =
-                              geoTotal > 0
-                                ? Math.round(
-                                    ((geoTotal - monthlyTotal) / geoTotal) * 100
-                                  )
-                                : 0
-
-                            if (reductionPercent >= 20) {
-                              return 'underreporting. Use with significant caution when temporal granularity is essential, and implement comprehensive validation against benchmark totals for financial accuracy'
-                            } else if (reductionPercent >= 5) {
-                              return 'variance. Use with caution when temporal granularity is essential, but implement additional validation against benchmark totals for financial accuracy'
-                            } else {
-                              return 'difference. Generally acceptable for temporal analysis use cases, though validation against benchmark totals is still recommended'
-                            }
-                          })()}
+                          {getReductionSeverity(monthlyReductionPercent)} with
+                          ~{monthlyReductionPercent}% cost {getMonthlyReductionNarrative(
+                            monthlyReductionPercent
+                          )}
                           .
                         </p>
                       </div>
@@ -2262,30 +2776,11 @@ export default function Home() {
                           ❌ High Risk Strategy
                         </h5>
                         <p className='text-red-700 text-xs leading-relaxed'>
-                          <strong>Daily API Calls Sum</strong> exhibits severe
-                          data loss with{' '}
-                          {(() => {
-                            const geoTotal = data.elements.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const dailyTotal = dailyData.aggregated.reduce(
-                              (sum, el) =>
-                                sum + parseFloat(el.costInLocalCurrency),
-                              0
-                            )
-                            const reductionPercent =
-                              geoTotal > 0
-                                ? Math.round(
-                                    ((geoTotal - dailyTotal) / geoTotal) * 100
-                                  )
-                                : 0
-                            return `~${reductionPercent}%`
-                          })()}{' '}
-                          cost underreporting. The compounded filtering from
-                          multiple daily API calls creates unreliable totals
-                          that may severely mislead business decisions.
+                          <strong>Daily Breakdown</strong> still shows
+                          ~{dailyReductionPercent}% cost underreporting versus
+                          the geographic baseline, but now reflects a single
+                          LinkedIn daily response instead of compounded
+                          client-side aggregation from multiple calls.
                         </p>
                       </div>
                     </div>
@@ -2294,53 +2789,16 @@ export default function Home() {
                         <strong>Key Insight:</strong> Data discrepancies between
                         strategies are not implementation errors but reflect
                         LinkedIn&apos;s privacy-first approach to professional
-                        demographic reporting. Choose your strategy based on
-                        your specific reporting requirements: Overall for
-                        validation, Geographic for demographics, Monthly with
-                        caution for time-series (expect{' '}
-                        {(() => {
-                          const geoTotal = data.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const monthlyTotal = monthlyData.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const monthlyReductionPercent =
-                            geoTotal > 0
-                              ? Math.round(
-                                  ((geoTotal - monthlyTotal) / geoTotal) * 100
-                                )
-                              : 0
-                          return `~${monthlyReductionPercent}%`
-                        })()}{' '}
-                        cost underreporting), and avoid Daily aggregation due to
-                        severe data loss (
-                        {(() => {
-                          const geoTotal = data.elements.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const dailyTotal = dailyData.aggregated.reduce(
-                            (sum, el) =>
-                              sum + parseFloat(el.costInLocalCurrency),
-                            0
-                          )
-                          const dailyReductionPercent =
-                            geoTotal > 0
-                              ? Math.round(
-                                  ((geoTotal - dailyTotal) / geoTotal) * 100
-                                )
-                              : 0
-                          return `~${dailyReductionPercent}%`
-                        })()}{' '}
-                        cost underreporting).
-                      </p>
-                    </div>
+                         demographic reporting. Choose your strategy based on
+                         your specific reporting requirements: Overall for
+                         validation, Geographic for demographics, Monthly with
+                         caution for time-series (expect ~{monthlyReductionPercent}%
+                         cost underreporting), and use Daily only when daily
+                         granularity is required, understanding it may still
+                         underreport by ~{dailyReductionPercent}% versus the
+                         geographic baseline.
+                       </p>
+                     </div>
                   </div>
                 </div>
               </div>

@@ -1,18 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLinkedInApiVersion } from '@/lib/linkedin-api-version'
 
+interface DateRange {
+  start: {
+    year: number
+    month: number
+    day: number
+  }
+  end?: {
+    year: number
+    month: number
+    day: number
+  }
+}
+
+interface AnalyticsElement {
+  dateRange: DateRange
+  impressions: number
+  likes: number
+  shares: number
+  costInLocalCurrency: string
+  clicks: number
+  costInUsd: string
+  comments: number
+  pivotValues: string[]
+}
+
+interface LinkedInAnalyticsResponse {
+  paging: {
+    start: number
+    count: number
+    links: Record<string, unknown>[]
+  }
+  elements: AnalyticsElement[]
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    const accessToken = authHeader?.replace('Bearer ', '')
-
-    if (!accessToken) {
-      return NextResponse.json(
-        { error: 'Access token not provided in Authorization header' },
-        { status: 401 }
-      )
-    }
-
     const { searchParams } = new URL(request.url)
     const accountId = searchParams.get('accountId')
     const creativeId = searchParams.get('creativeId')
@@ -31,6 +55,17 @@ export async function GET(request: NextRequest) {
 
     const start = new Date(startDate)
 
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.replace('Bearer ', '')
+    const apiVersion = getLinkedInApiVersion()
+
+    if (!accessToken) {
+      return NextResponse.json(
+        { error: 'Access token not provided in Authorization header' },
+        { status: 401 }
+      )
+    }
+
     const creativeUrn = `urn:li:sponsoredCreative:${creativeId}`
     const accountUrn = `urn:li:sponsoredAccount:${accountId}`
     let dateRangeParam = `(start:(year:${start.getFullYear()},month:${start.getMonth() + 1},day:${start.getDate()})`
@@ -44,19 +79,19 @@ export async function GET(request: NextRequest) {
 
     let urlString = 'https://api.linkedin.com/rest/adAnalytics'
     urlString += '?q=analytics'
-    urlString += '&timeGranularity=MONTHLY'
+    urlString += '&timeGranularity=DAILY'
     urlString += '&pivot=MEMBER_COUNTRY_V2'
     urlString += `&creatives=List(${encodeURIComponent(creativeUrn)})`
     urlString += `&accounts=List(${encodeURIComponent(accountUrn)})`
     urlString += `&dateRange=${dateRangeParam}`
     urlString += `&fields=${fieldsParam}`
 
-    console.log('Monthly Analytics API URL:', urlString)
+    console.log('LinkedIn Daily Single-Call API URL:', urlString)
 
     const response = await fetch(urlString, {
       method: 'GET',
       headers: {
-        'LinkedIn-Version': getLinkedInApiVersion(),
+        'LinkedIn-Version': apiVersion,
         Authorization: `Bearer ${accessToken}`,
         'X-Restli-Protocol-Version': '2.0.0',
       },
@@ -64,26 +99,24 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error('LinkedIn API Error:', response.status, errorText)
+      console.error('LinkedIn Daily Single-Call API Error:', response.status, errorText)
+
       return NextResponse.json(
         {
-          error: `LinkedIn API Error: ${response.status}`,
+          error: `LinkedIn API request failed: ${response.status}`,
           details: errorText,
+          url: urlString,
         },
         { status: response.status }
       )
     }
 
-    const data = await response.json()
-
+    const data: LinkedInAnalyticsResponse = await response.json()
     return NextResponse.json(data)
   } catch (error) {
-    console.error('Monthly Analytics API Error:', error)
+    console.error('Daily Single-Call API Error:', error)
     return NextResponse.json(
-      {
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

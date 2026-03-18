@@ -6,58 +6,37 @@ import {
   downloadCSV,
   formatDateRange,
   formatPivotValue,
-  CSVExportData,
 } from '../../utils/csv-export'
 
 // Mock data for testing
 const mockAnalyticsElement = {
-  actionClicks: 10,
-  viralImpressions: 500,
-  comments: 5,
-  oneClickLeads: 2,
   dateRange: {
     start: { year: 2024, month: 1, day: 1 },
     end: { year: 2024, month: 1, day: 31 },
   },
-  landingPageClicks: 15,
-  adUnitClicks: 25,
-  follows: 3,
-  oneClickLeadFormOpens: 1,
-  companyPageClicks: 8,
-  costInLocalCurrency: '100.50',
   impressions: 1000,
-  viralFollows: 2,
-  sends: 100,
-  shares: 7,
-  clicks: 50,
-  viralClicks: 20,
-  pivotValues: ['urn:li:geo:103644278'], // United States
   likes: 12,
+  shares: 7,
+  costInLocalCurrency: '100.50',
+  clicks: 50,
+  costInUsd: '120.75',
+  comments: 5,
+  pivotValues: ['urn:li:geo:103644278'], // United States
 }
 
 const mockAnalyticsElementZeros = {
-  actionClicks: 0,
-  viralImpressions: 0,
-  comments: 0,
-  oneClickLeads: 0,
   dateRange: {
     start: { year: 2024, month: 1, day: 2 },
     end: { year: 2024, month: 1, day: 2 },
   },
-  landingPageClicks: 0,
-  adUnitClicks: 0,
-  follows: 0,
-  oneClickLeadFormOpens: 0,
-  companyPageClicks: 0,
-  costInLocalCurrency: '0.00',
   impressions: 0,
-  viralFollows: 0,
-  sends: 0,
-  shares: 0,
-  clicks: 0,
-  viralClicks: 0,
-  pivotValues: ['urn:li:geo:106155005'], // Canada
   likes: 0,
+  shares: 0,
+  costInLocalCurrency: '0.00',
+  clicks: 0,
+  costInUsd: '0.00',
+  comments: 0,
+  pivotValues: ['urn:li:geo:106155005'], // Canada
 }
 
 const mockGeoData = {
@@ -120,7 +99,7 @@ describe('CSV Export Utilities', () => {
       expect(headers).toContain('"Impressions"')
       expect(headers).toContain('"Clicks"')
       expect(headers).toContain('"Cost (USD)"')
-      expect(headers).toContain('"Company Page Clicks"')
+      expect(headers).toContain('"Shares"')
     })
 
     it('should include all data elements including zero values', () => {
@@ -155,6 +134,7 @@ describe('CSV Export Utilities', () => {
       expect(totalsRow).toContain('"50"')
       // Total cost should be 100.50 + 0.00 = 100.50
       expect(totalsRow).toContain('"100.50"')
+      expect(totalsRow).toContain('"120.75"')
     })
 
     it('should format geographic data correctly', () => {
@@ -193,17 +173,7 @@ describe('CSV Export Utilities', () => {
 
   describe('generateDailyCSV', () => {
     const mockDailyData = {
-      dailyData: [
-        {
-          date: '2024-01-01',
-          elements: [mockAnalyticsElement],
-        },
-        {
-          date: '2024-01-02',
-          elements: [mockAnalyticsElementZeros],
-        },
-      ],
-      aggregated: [mockAnalyticsElement, mockAnalyticsElementZeros],
+      elements: [mockAnalyticsElement, mockAnalyticsElementZeros],
     }
 
     it('should generate CSV with daily-specific headers', () => {
@@ -211,8 +181,8 @@ describe('CSV Export Utilities', () => {
       const lines = csv.split('\n')
       const headers = lines[0]
 
-      expect(headers).toContain('"Date"')
-      expect(headers).toContain('"Date Range"')
+      expect(headers).toContain('"Start Date"')
+      expect(headers).toContain('"End Date"')
       expect(headers).toContain('"Geography"')
     })
 
@@ -229,20 +199,19 @@ describe('CSV Export Utilities', () => {
       expect(csv).toContain('"0.00"')
     })
 
-    it('should include aggregated totals row', () => {
+    it('should not include aggregated totals row', () => {
       const csv = generateDailyCSV(mockDailyData, mockGeoData)
 
-      expect(csv).toContain('"AGGREGATED TOTALS"')
-      expect(csv).toContain('"All Days Combined"')
-      expect(csv).toContain('"All Regions Combined"')
+      expect(csv).not.toContain('"AGGREGATED TOTALS"')
+      expect(csv).not.toContain('"All Regions Combined"')
     })
 
     it('should have correct number of rows', () => {
       const csv = generateDailyCSV(mockDailyData, mockGeoData)
       const lines = csv.split('\n')
 
-      // Should have headers + 2 daily rows + 1 aggregated totals row
-      expect(lines.length).toBe(4)
+      // Should have headers + 2 daily rows (no totals row)
+      expect(lines.length).toBe(3)
     })
   })
 

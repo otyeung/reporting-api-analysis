@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getLinkedInApiVersion } from '@/lib/linkedin-api-version'
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
     )
 
     // Get API version from environment
-    const apiVersion = process.env.LINKEDIN_API_VERSION || '202506'
+    const apiVersion = getLinkedInApiVersion()
 
     // Make the request to LinkedIn API from the server (no CORS issues)
     const response = await fetch('https://api.linkedin.com/v2/me', {

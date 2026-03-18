@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getLinkedInApiVersion } from '@/lib/linkedin-api-version'
 
 interface GeoResponse {
   defaultLocalizedName: {
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
     // Get access token from Authorization header and API version from environment
     const authHeader = request.headers.get('authorization')
     const accessToken = authHeader?.replace('Bearer ', '')
-    const apiVersion = process.env.LINKEDIN_API_VERSION || '202506'
+    const apiVersion = getLinkedInApiVersion()
 
     if (!accessToken) {
       return NextResponse.json(

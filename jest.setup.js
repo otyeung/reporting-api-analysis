@@ -157,7 +157,6 @@ process.env.NEXTAUTH_SECRET = 'test-secret'
 process.env.LINKEDIN_CLIENT_ID = 'test-client-id'
 process.env.LINKEDIN_CLIENT_SECRET = 'test-client-secret'
 process.env.LINKEDIN_SCOPE = 'r_ads_reporting,r_basicprofile,r_ads,rw_ads'
-process.env.LINKEDIN_API_VERSION = '202506'
 
 // Mock console methods to reduce noise in tests
 const originalConsoleError = console.error

@@ -1,12 +1,19 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from '../../lib/auth-config'
+import { getLinkedInApiVersion } from '@/lib/linkedin-api-version'
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const authHeader = request.headers.get('authorization')
+    let accessToken = authHeader?.replace('Bearer ', '')
 
-    if (!session?.accessToken) {
+    if (!accessToken) {
+      const session = await getServerSession(authOptions)
+      accessToken = session?.accessToken
+    }
+
+    if (!accessToken) {
       return NextResponse.json(
         { error: 'No access token found' },
         { status: 401 }
@@ -19,12 +26,12 @@ export async function POST() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'LinkedIn-Version': process.env.LINKEDIN_API_VERSION || '202409',
+          'LinkedIn-Version': getLinkedInApiVersion(),
         },
         body: new URLSearchParams({
           client_id: process.env.LINKEDIN_CLIENT_ID!,
           client_secret: process.env.LINKEDIN_CLIENT_SECRET!,
-          token: session.accessToken,
+          token: accessToken,
         }),
       }
     )

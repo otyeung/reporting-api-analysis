@@ -28,7 +28,7 @@ describe('/api/overall-analytics', () => {
     getServerSession.mockResolvedValue(null)
 
     const request = new NextRequest(
-      'http://localhost:3001/api/overall-analytics?campaignId=123&startDate=2024-01-01&endDate=2024-01-31'
+      'http://localhost:3001/api/overall-analytics?accountId=123&creativeId=456&startDate=2024-01-01&endDate=2024-01-31'
     )
 
     const response = await GET(request)
@@ -53,7 +53,7 @@ describe('/api/overall-analytics', () => {
 
     expect(response.status).toBe(400)
     expect(data.error).toBe(
-      'Missing required parameters: campaignId, startDate, endDate'
+      'Missing required parameters: accountId, creativeId, startDate'
     )
   })
 
@@ -66,18 +66,18 @@ describe('/api/overall-analytics', () => {
     const mockAnalyticsResponse = {
       elements: [
         {
-          impressions: 1000,
-          clicks: 50,
-          costInLocalCurrency: '100.00',
-          companyPageClicks: 10,
-          likes: 5,
-          comments: 2,
-          shares: 3,
-          follows: 1,
           dateRange: {
             start: { year: 2024, month: 1, day: 1 },
             end: { year: 2024, month: 1, day: 31 },
           },
+          impressions: 1000,
+          likes: 5,
+          shares: 3,
+          costInLocalCurrency: '100.00',
+          clicks: 50,
+          costInUsd: '125.00',
+          comments: 2,
+          pivotValues: [],
         },
       ],
     }
@@ -88,7 +88,7 @@ describe('/api/overall-analytics', () => {
     })
 
     const request = new NextRequest(
-      'http://localhost:3001/api/overall-analytics?campaignId=123&startDate=2024-01-01&endDate=2024-01-31',
+      'http://localhost:3001/api/overall-analytics?accountId=123&creativeId=456&startDate=2024-01-01&endDate=2024-01-31',
       {
         headers: {
           authorization: 'Bearer valid-token',
@@ -102,9 +102,16 @@ describe('/api/overall-analytics', () => {
     expect(response.status).toBe(200)
     expect(data.elements).toHaveLength(1)
     expect(data.elements[0].impressions).toBe(1000)
+    expect(data.elements[0].costInUsd).toBe('125.00')
 
-    expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining('rest/adAnalytics'),
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [calledUrl, calledOptions] = (fetch as jest.Mock).mock.calls[0]
+    expect(calledUrl).toContain('rest/adAnalytics')
+    expect(calledUrl).toContain('creatives=List(urn%3Ali%3AsponsoredCreative%3A456)')
+    expect(calledUrl).toContain('accounts=List(urn%3Ali%3AsponsoredAccount%3A123)')
+    expect(calledUrl).not.toContain('campaigns=')
+    expect(calledUrl).not.toContain('pivot=')
+    expect(calledOptions).toEqual(
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: 'Bearer valid-token',
@@ -123,10 +130,11 @@ describe('/api/overall-analytics', () => {
       ok: false,
       status: 403,
       statusText: 'Forbidden',
+      text: async () => 'Forbidden',
     })
 
     const request = new NextRequest(
-      'http://localhost:3001/api/overall-analytics?campaignId=123&startDate=2024-01-01&endDate=2024-01-31',
+      'http://localhost:3001/api/overall-analytics?accountId=123&creativeId=456&startDate=2024-01-01&endDate=2024-01-31',
       {
         headers: {
           authorization: 'Bearer test-token',
@@ -137,8 +145,8 @@ describe('/api/overall-analytics', () => {
     const response = await GET(request)
     const data = await response.json()
 
-    expect(response.status).toBe(500)
-    expect(data.error).toBe('Internal server error')
+    expect(response.status).toBe(403)
+    expect(data.error).toBe('LinkedIn API request failed: 403')
   })
 
   it('should handle network errors', async () => {
@@ -149,7 +157,7 @@ describe('/api/overall-analytics', () => {
     ;(fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'))
 
     const request = new NextRequest(
-      'http://localhost:3001/api/overall-analytics?campaignId=123&startDate=2024-01-01&endDate=2024-01-31',
+      'http://localhost:3001/api/overall-analytics?accountId=123&creativeId=456&startDate=2024-01-01&endDate=2024-01-31',
       {
         headers: {
           authorization: 'Bearer test-token',

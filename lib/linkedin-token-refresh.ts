@@ -1,4 +1,5 @@
-// Utility function to refresh LinkedIn access token
+import { getLinkedInApiVersion } from '@/lib/linkedin-api-version'
+
 export async function refreshLinkedInToken(refreshToken: string) {
   try {
     console.log('Attempting to refresh LinkedIn token...')
@@ -78,7 +79,7 @@ export async function introspectLinkedInToken(accessToken: string) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'LinkedIn-Version': process.env.LINKEDIN_API_VERSION || '202409',
+          'LinkedIn-Version': getLinkedInApiVersion(),
         },
         body: new URLSearchParams({
           client_id: process.env.LINKEDIN_CLIENT_ID!,

@@ -170,10 +170,10 @@ describe('Data Processing Utilities', () => {
       impressions: number
       clicks: number
       costInLocalCurrency: string
+      costInUsd: string
       likes: number
       comments: number
       shares: number
-      follows: number
     }
 
     const aggregateMetrics = (elements: Metrics[]): Metrics => {
@@ -185,19 +185,21 @@ describe('Data Processing Utilities', () => {
             parseFloat(acc.costInLocalCurrency) +
             parseFloat(element.costInLocalCurrency)
           ).toFixed(2),
+          costInUsd: (
+            parseFloat(acc.costInUsd) + parseFloat(element.costInUsd)
+          ).toFixed(2),
           likes: acc.likes + element.likes,
           comments: acc.comments + element.comments,
           shares: acc.shares + element.shares,
-          follows: acc.follows + element.follows,
         }),
         {
           impressions: 0,
           clicks: 0,
           costInLocalCurrency: '0.00',
+          costInUsd: '0.00',
           likes: 0,
           comments: 0,
           shares: 0,
-          follows: 0,
         }
       )
     }
@@ -208,19 +210,19 @@ describe('Data Processing Utilities', () => {
           impressions: 1000,
           clicks: 50,
           costInLocalCurrency: '100.00',
+          costInUsd: '125.00',
           likes: 5,
           comments: 2,
           shares: 1,
-          follows: 3,
         },
         {
           impressions: 2000,
           clicks: 75,
           costInLocalCurrency: '150.50',
+          costInUsd: '175.25',
           likes: 8,
           comments: 4,
           shares: 2,
-          follows: 1,
         },
       ]
 
@@ -229,10 +231,10 @@ describe('Data Processing Utilities', () => {
       expect(result.impressions).toBe(3000)
       expect(result.clicks).toBe(125)
       expect(result.costInLocalCurrency).toBe('250.50')
+      expect(result.costInUsd).toBe('300.25')
       expect(result.likes).toBe(13)
       expect(result.comments).toBe(6)
       expect(result.shares).toBe(3)
-      expect(result.follows).toBe(4)
     })
 
     it('should handle empty array', () => {
@@ -241,10 +243,10 @@ describe('Data Processing Utilities', () => {
       expect(result.impressions).toBe(0)
       expect(result.clicks).toBe(0)
       expect(result.costInLocalCurrency).toBe('0.00')
+      expect(result.costInUsd).toBe('0.00')
       expect(result.likes).toBe(0)
       expect(result.comments).toBe(0)
       expect(result.shares).toBe(0)
-      expect(result.follows).toBe(0)
     })
 
     it('should handle single element', () => {
@@ -253,10 +255,10 @@ describe('Data Processing Utilities', () => {
           impressions: 500,
           clicks: 25,
           costInLocalCurrency: '75.25',
+          costInUsd: '90.10',
           likes: 3,
           comments: 1,
           shares: 0,
-          follows: 2,
         },
       ]
 
@@ -265,10 +267,10 @@ describe('Data Processing Utilities', () => {
       expect(result.impressions).toBe(500)
       expect(result.clicks).toBe(25)
       expect(result.costInLocalCurrency).toBe('75.25')
+      expect(result.costInUsd).toBe('90.10')
       expect(result.likes).toBe(3)
       expect(result.comments).toBe(1)
       expect(result.shares).toBe(0)
-      expect(result.follows).toBe(2)
     })
   })
 })
