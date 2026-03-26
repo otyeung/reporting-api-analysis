@@ -133,8 +133,11 @@ describe('Home Page', () => {
     expect((screen.getByLabelText('Account ID') as HTMLInputElement).value).toBe(
       '518645095'
     )
-    expect((screen.getByLabelText('Creative ID') as HTMLInputElement).value).toBe(
-      '1156418316'
+    expect((screen.getByLabelText('Ad ID') as HTMLInputElement).value).toBe(
+      '531508486'
+    )
+    expect((screen.getByLabelText('Ad Set ID') as HTMLInputElement).value).toBe(
+      '1119860556'
     )
     expect((screen.getByLabelText('Start Date') as HTMLInputElement).value).toBe(
       '2026-02-19'
@@ -148,7 +151,8 @@ describe('Home Page', () => {
     render(<Home />)
 
     expect(screen.getByLabelText('Account ID').hasAttribute('required')).toBe(true)
-    expect(screen.getByLabelText('Creative ID').hasAttribute('required')).toBe(true)
+    expect(screen.getByLabelText('Ad ID').hasAttribute('required')).toBe(false)
+    expect(screen.getByLabelText('Ad Set ID').hasAttribute('required')).toBe(false)
     expect(screen.getByLabelText('Start Date').hasAttribute('required')).toBe(true)
     expect(screen.getByLabelText('End Date').hasAttribute('required')).toBe(false)
   })
@@ -170,12 +174,18 @@ describe('Home Page', () => {
     })
 
     const urls = mockFetch.mock.calls.map((call) => String(call[0]))
-    expect(urls[0]).toContain(
-      '/api/overall-analytics?accountId=518645095&creativeId=1156418316&startDate=2026-02-19'
-    )
-    expect(urls[1]).toContain('/api/analytics?accountId=518645095&creativeId=1156418316')
-    expect(urls[2]).toContain('/api/monthly-analytics?accountId=518645095&creativeId=1156418316')
-    expect(urls[3]).toContain('/api/daily-analytics-single?accountId=518645095&creativeId=1156418316')
+    expect(urls[0]).toContain('/api/overall-analytics?accountId=518645095&startDate=2026-02-19')
+    expect(urls[0]).toContain('creativeId=1119860556')
+    expect(urls[0]).toContain('campaignId=531508486')
+    expect(urls[1]).toContain('/api/analytics?accountId=518645095&startDate=2026-02-19')
+    expect(urls[1]).toContain('creativeId=1119860556')
+    expect(urls[1]).toContain('campaignId=531508486')
+    expect(urls[2]).toContain('/api/monthly-analytics?accountId=518645095&startDate=2026-02-19')
+    expect(urls[2]).toContain('creativeId=1119860556')
+    expect(urls[2]).toContain('campaignId=531508486')
+    expect(urls[3]).toContain('/api/daily-analytics-single?accountId=518645095&startDate=2026-02-19')
+    expect(urls[3]).toContain('creativeId=1119860556')
+    expect(urls[3]).toContain('campaignId=531508486')
   })
 
   it('should handle API errors gracefully', async () => {
@@ -216,12 +226,15 @@ describe('Home Page', () => {
     render(<Home />)
 
     const accountInput = screen.getByLabelText('Account ID')
-    const creativeInput = screen.getByLabelText('Creative ID')
+    const campaignInput = screen.getByLabelText('Ad ID')
+    const creativeInput = screen.getByLabelText('Ad Set ID')
 
     fireEvent.change(accountInput, { target: { value: '123456789' } })
+    fireEvent.change(campaignInput, { target: { value: '111222333' } })
     fireEvent.change(creativeInput, { target: { value: '987654321' } })
 
     expect((accountInput as HTMLInputElement).value).toBe('123456789')
+    expect((campaignInput as HTMLInputElement).value).toBe('111222333')
     expect((creativeInput as HTMLInputElement).value).toBe('987654321')
   })
 

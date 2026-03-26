@@ -40,14 +40,15 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const accountId = searchParams.get('accountId')
     const creativeId = searchParams.get('creativeId')
+    const campaignId = searchParams.get('campaignId')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
 
-    if (!accountId || !creativeId || !startDate) {
+    if (!accountId || !startDate) {
       return NextResponse.json(
         {
           error:
-            'Missing required parameters: accountId, creativeId, startDate',
+            'Missing required parameters: accountId, startDate',
         },
         { status: 400 }
       )
@@ -66,7 +67,6 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const creativeUrn = `urn:li:sponsoredCreative:${creativeId}`
     const accountUrn = `urn:li:sponsoredAccount:${accountId}`
     let dateRangeParam = `(start:(year:${start.getFullYear()},month:${start.getMonth() + 1},day:${start.getDate()})`
     if (endDate) {
@@ -81,8 +81,15 @@ export async function GET(request: NextRequest) {
     urlString += '?q=analytics'
     urlString += '&timeGranularity=ALL'
     urlString += '&pivot=MEMBER_COUNTRY_V2'
-    urlString += `&creatives=List(${encodeURIComponent(creativeUrn)})`
+    if (creativeId) {
+      const creativeUrn = `urn:li:sponsoredCreative:${creativeId}`
+      urlString += `&creatives=List(${encodeURIComponent(creativeUrn)})`
+    }
     urlString += `&accounts=List(${encodeURIComponent(accountUrn)})`
+    if (campaignId && campaignId !== '0') {
+      const campaignUrn = `urn:li:sponsoredCampaign:${campaignId}`
+      urlString += `&campaigns=List(${encodeURIComponent(campaignUrn)})`
+    }
     urlString += `&dateRange=${dateRangeParam}`
     urlString += `&fields=${fieldsParam}`
 

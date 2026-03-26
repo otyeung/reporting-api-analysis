@@ -53,7 +53,7 @@ describe('/api/overall-analytics', () => {
 
     expect(response.status).toBe(400)
     expect(data.error).toBe(
-      'Missing required parameters: accountId, creativeId, startDate'
+      'Missing required parameters: accountId, startDate'
     )
   })
 

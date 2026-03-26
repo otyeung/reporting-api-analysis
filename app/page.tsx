@@ -249,7 +249,8 @@ export default function Home() {
   const router = useRouter()
 
   const [accountId, setAccountId] = useState('518645095')
-  const [creativeId, setCreativeId] = useState('1156418316')
+  const [campaignId, setCampaignId] = useState('531508486')
+  const [creativeId, setCreativeId] = useState('1119860556')
 
   const getDefaultDates = () => {
     return {
@@ -446,7 +447,9 @@ export default function Home() {
         throw new Error('Start date is required.')
       }
 
-      let query = `accountId=${accountId}&creativeId=${creativeId}&startDate=${startDate}`
+      let query = `accountId=${accountId}&startDate=${startDate}`
+      if (creativeId) query += `&creativeId=${creativeId}`
+      if (campaignId && campaignId !== '0') query += `&campaignId=${campaignId}`
       if (endDate) query += `&endDate=${endDate}`
 
       const [
@@ -612,9 +615,6 @@ export default function Home() {
 
   const buildCurlCommand = (strategy: StrategyKey) => {
     const start = new Date(startDate)
-    const creativeUrn = encodeURIComponent(
-      `urn:li:sponsoredCreative:${creativeId}`
-    )
     const accountUrn = encodeURIComponent(`urn:li:sponsoredAccount:${accountId}`)
     let dateRangeParam = `(start:(year:${start.getFullYear()},month:${start.getMonth() + 1},day:${start.getDate()})`
     if (endDate) {
@@ -643,8 +643,19 @@ export default function Home() {
         break
     }
 
-    url += `&creatives=List(${creativeUrn})`
+    if (creativeId) {
+      const creativeUrn = encodeURIComponent(
+        `urn:li:sponsoredCreative:${creativeId}`
+      )
+      url += `&creatives=List(${creativeUrn})`
+    }
     url += `&accounts=List(${accountUrn})`
+    if (campaignId && campaignId !== '0') {
+      const campaignUrn = encodeURIComponent(
+        `urn:li:sponsoredCampaign:${campaignId}`
+      )
+      url += `&campaigns=List(${campaignUrn})`
+    }
     url += `&dateRange=${dateRangeParam}`
     url += `&fields=${fields}`
 
@@ -1060,7 +1071,7 @@ export default function Home() {
             </div>
 
             <form onSubmit={handleSubmit} className='space-y-4 mb-8'>
-              <div className='grid grid-cols-1 md:grid-cols-4 gap-4'>
+              <div className='grid grid-cols-1 md:grid-cols-5 gap-4'>
                 <div>
                   <label
                     htmlFor='accountId'
@@ -1081,10 +1092,27 @@ export default function Home() {
 
                 <div>
                   <label
+                    htmlFor='campaignId'
+                    className='block text-sm font-medium text-gray-700'
+                  >
+                    Ad ID
+                  </label>
+                  <input
+                    type='text'
+                    id='campaignId'
+                    value={campaignId}
+                    onChange={(e) => setCampaignId(e.target.value)}
+                    className='mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
+                    placeholder='Enter campaign ID (0 to skip)'
+                  />
+                </div>
+
+                <div>
+                  <label
                     htmlFor='creativeId'
                     className='block text-sm font-medium text-gray-700'
                   >
-                    Creative ID
+                    Ad Set ID
                   </label>
                   <input
                     type='text'
@@ -1093,7 +1121,6 @@ export default function Home() {
                     onChange={(e) => setCreativeId(e.target.value)}
                     className='mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500'
                     placeholder='Enter creative ID'
-                    required
                   />
                 </div>
 

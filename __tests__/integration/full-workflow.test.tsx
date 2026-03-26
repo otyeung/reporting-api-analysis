@@ -119,15 +119,16 @@ describe('Integration Tests - Full Analytics Workflow', () => {
     render(<Home />)
 
     expect(screen.getByLabelText('Account ID')).toBeDefined()
-    expect(screen.getByLabelText('Creative ID')).toBeDefined()
+    expect(screen.getByLabelText('Ad ID')).toBeDefined()
+    expect(screen.getByLabelText('Ad Set ID')).toBeDefined()
     expect(screen.getByLabelText('Start Date')).toBeDefined()
     expect(screen.getByLabelText('End Date')).toBeDefined()
 
     fireEvent.change(screen.getByLabelText('Account ID'), {
       target: { value: '518645095' },
     })
-    fireEvent.change(screen.getByLabelText('Creative ID'), {
-      target: { value: '1156418316' },
+    fireEvent.change(screen.getByLabelText('Ad Set ID'), {
+      target: { value: '1119860556' },
     })
     fireEvent.change(screen.getByLabelText('Start Date'), {
       target: { value: '2024-01-01' },

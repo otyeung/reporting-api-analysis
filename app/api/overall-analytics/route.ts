@@ -41,14 +41,15 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const accountId = searchParams.get('accountId')
     const creativeId = searchParams.get('creativeId')
+    const campaignId = searchParams.get('campaignId')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
 
-    if (!accountId || !creativeId || !startDate) {
+    if (!accountId || !startDate) {
       return NextResponse.json(
         {
           error:
-            'Missing required parameters: accountId, creativeId, startDate',
+            'Missing required parameters: accountId, startDate',
         },
         { status: 400 }
       )
@@ -76,8 +77,7 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Construct LinkedIn API URL with creatives + accounts (NO PIVOT)
-    const creativeUrn = `urn:li:sponsoredCreative:${creativeId}`
+    // Construct LinkedIn API URL with accounts (NO PIVOT)
     const accountUrn = `urn:li:sponsoredAccount:${accountId}`
     let dateRangeParam = `(start:(year:${startFormatted.year},month:${startFormatted.month},day:${startFormatted.day})`
     if (endDate) {
@@ -88,12 +88,19 @@ export async function GET(request: NextRequest) {
     const fieldsParam =
       'dateRange,impressions,likes,shares,costInLocalCurrency,clicks,costInUsd,comments,pivotValues'
 
-    // Build the URL with creatives + accounts (NO PIVOT)
+    // Build the URL with accounts (NO PIVOT)
     let urlString = 'https://api.linkedin.com/rest/adAnalytics'
     urlString += '?q=analytics'
     urlString += '&timeGranularity=ALL'
-    urlString += `&creatives=List(${encodeURIComponent(creativeUrn)})`
+    if (creativeId) {
+      const creativeUrn = `urn:li:sponsoredCreative:${creativeId}`
+      urlString += `&creatives=List(${encodeURIComponent(creativeUrn)})`
+    }
     urlString += `&accounts=List(${encodeURIComponent(accountUrn)})`
+    if (campaignId && campaignId !== '0') {
+      const campaignUrn = `urn:li:sponsoredCampaign:${campaignId}`
+      urlString += `&campaigns=List(${encodeURIComponent(campaignUrn)})`
+    }
     urlString += `&dateRange=${dateRangeParam}`
     urlString += `&fields=${fieldsParam}`
 
